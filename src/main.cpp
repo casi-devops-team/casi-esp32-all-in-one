@@ -7,8 +7,8 @@
 
 // variable declarations
 byte i2c_address;
-uint8_t buffer[20];
-uint8_t i2c_buffer[20];
+uint8_t buffer[40];
+uint8_t i2c_buffer[40];
 String serial_number;
 const char* ssid = "Dialog 4G 707";
 const char* password = "1JhLgena";
