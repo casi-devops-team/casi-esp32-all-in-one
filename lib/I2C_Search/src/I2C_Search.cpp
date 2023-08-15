@@ -1,4 +1,4 @@
-#include "i2c_search.h"
+#include <I2C_Search.h>
 #include <Arduino.h>
 #include <Wire.h>
 

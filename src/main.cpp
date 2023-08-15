@@ -3,7 +3,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-#include "i2c_search.h"
+#include <I2C_Search.h>
 
 // variable declarations
 byte i2c_address;
