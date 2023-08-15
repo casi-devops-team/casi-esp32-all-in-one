@@ -1,6 +1,7 @@
 # Welcome to CASI!
 
 ## CASI-ESP32 Integration
+This program automatically find the I2C device and publish data via mqtt. This program supports one I2C device only.
 
 ### ESP32 Pin Configuration
 |PIN  | Usage |

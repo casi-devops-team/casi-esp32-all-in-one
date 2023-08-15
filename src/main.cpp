@@ -28,7 +28,7 @@ PubSubClient mqtt_client(espClient);
 // put function declarations here:
 void initWiFi();
 bool is_buffer_empty(const uint8_t *buffer, size_t size);
-void callback(char *topic, byte *payload, unsigned int length);
+void mqttCallback(char *topic, byte *payload, unsigned int length);
 
 void setup() {
   Wire.begin();
@@ -43,7 +43,7 @@ void setup() {
 
   //connecting to a mqtt broker
   mqtt_client.setServer(mqtt_broker, mqtt_port);
-  mqtt_client.setCallback(callback);
+  mqtt_client.setCallback(mqttCallback);
 
   while (!mqtt_client.connected()) {
     String client_id = "esp32-client-";
@@ -112,6 +112,7 @@ void loop() {
   }
   
   
+  
   delay(5000);
 }
 
@@ -136,4 +137,4 @@ void initWiFi() {
   Serial.println(WiFi.localIP());
 }
 
-void callback(char *topic, byte *payload, unsigned int length) {}
+void mqttCallback(char *topic, byte *payload, unsigned int length) {}
