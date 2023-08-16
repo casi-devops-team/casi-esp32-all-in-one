@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <WiFi.h>
-#include <PubSubClient.h>
+#include <AsyncMqttClient.h>
+#include <Ticker.h>
 
 #include <I2C_Search.h>
 
@@ -25,11 +26,12 @@ const int mqtt_port = 1883;
 String topic_in;
 String topic_out;
 
-WiFiClient espClient;
-PubSubClient mqtt_client(espClient);
+// WiFiClient espClient;
+
+AsyncMqttClient mqttClient;
+Ticker mqttReconnectTimer;
 
 // Analog Reading
-// Potentiometer is connected to GPIO 34 (Analog ADC1_CH6) 
 const int AI1 = 34;
 const int AI2 = 35;
 const int AO3 = 2;
@@ -38,12 +40,102 @@ const int AO4 = 4;
 // put function declarations here:
 void initWiFi();
 bool is_buffer_empty(const uint8_t *buffer, size_t size);
-void mqttCallback(char *topic, byte *payload, unsigned int length);
+
+//--------------------------------------------------------
+void connectToMqtt() {
+  Serial.println("Connecting to MQTT...");
+  mqttClient.connect();
+}
+void onMqttConnect(bool sessionPresent) {
+  Serial.println("Connected to MQTT.");
+  Serial.print("Session present: ");
+  Serial.println(sessionPresent);
+  uint16_t packetIdSub = mqttClient.subscribe("casi/production/out/0CB815D62698/ao3", 2);
+  Serial.print("Subscribing at QoS 2, packetId: ");
+  Serial.println(packetIdSub);
+}
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+  Serial.println("Disconnected from MQTT.");
+
+  if (WiFi.isConnected()) {
+    mqttReconnectTimer.once(2, connectToMqtt);
+  }
+}
+
+void onMqttSubscribe(uint16_t packetId, uint8_t qos) {
+  Serial.println("Subscribe acknowledged.");
+  Serial.print("  packetId: ");
+  Serial.println(packetId);
+  Serial.print("  qos: ");
+  Serial.println(qos);
+}
+
+void onMqttUnsubscribe(uint16_t packetId) {
+  Serial.println("Unsubscribe acknowledged.");
+  Serial.print("  packetId: ");
+  Serial.println(packetId);
+}
+
+void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
+  Serial.println("Publish received.");
+  Serial.print("  topic: ");
+  // Serial.println(topic);
+  // Serial.print("  qos: ");
+  // Serial.println(properties.qos);
+  // Serial.print("  dup: ");
+  // Serial.println(properties.dup);
+  // Serial.print("  retain: ");
+  // Serial.println(properties.retain);
+  // Serial.print("  len: ");
+  // Serial.println(len);
+  // Serial.print("  index: ");
+  // Serial.println(index);
+  // Serial.print("  total: ");
+  // Serial.println(total);
+  Serial.print("  payload: ");
+  Serial.println(payload);
+
+  String messageTemp;
+
+  for (int i = 0; i < len; i++) {
+    messageTemp += (char)payload[i];
+  }
+  Serial.println(messageTemp);
+
+  if (String(topic) == topic_out+"/ao3")
+  {
+    Serial.print("Changing output AO3 to ");
+    Serial.println(messageTemp);
+    analogWrite(AO3, messageTemp.toInt());
+    
+  } else if(String(topic) == topic_out+"/ao4"){
+    Serial.print("Changing output AO4 to ");
+    Serial.println(messageTemp);
+    analogWrite(AO4, messageTemp.toInt());
+  }
+}
+
+void onMqttPublish(uint16_t packetId) {
+  // Serial.println("Publish acknowledged.");
+  // Serial.print("  packetId: ");
+  // Serial.println(packetId);
+}
 
 void setup() {
   Wire.begin();
   Serial.begin(9600);
   Serial.println("\nI2C Scanner");
+
+  mqttClient.onConnect(onMqttConnect);
+  mqttClient.onDisconnect(onMqttDisconnect);
+  mqttClient.onSubscribe(onMqttSubscribe);
+  mqttClient.onUnsubscribe(onMqttUnsubscribe);
+  mqttClient.onMessage(onMqttMessage);
+  mqttClient.onPublish(onMqttPublish);
+
+  mqttClient.setServer(mqtt_broker, mqtt_port);
+  mqttClient.setCredentials(mqtt_username, mqtt_password);
+  
   initWiFi();
   Serial.print("RSSI: ");
   Serial.println(WiFi.RSSI());
@@ -53,62 +145,17 @@ void setup() {
   topic_in = String(topic_in_prefix) + serial_number;
   topic_out = String(topic_out_prefix) + serial_number;
 
-  //connecting to a mqtt broker
-  mqtt_client.setServer(mqtt_broker, mqtt_port);
-  mqtt_client.setCallback(mqttCallback);
-
-  while (!mqtt_client.connected()) {
-    String client_id = "esp32-client-";
-    client_id += serial_number;
-    Serial.printf("The client %s connects to the CASI MQTT broker\n", client_id.c_str());
-    if (mqtt_client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
-        Serial.println("CASI EMQX MQTT broker connected");
-        // mqtt_client.subscribe((topic_out + "/+").c_str());
-        if (mqtt_client.subscribe("casi/production/out/0CB815D62698/ao3")){
-          Serial.println("Subcribed: casi/production/out/0CB815D62698/ao3");
-        }
-    } else {
-        Serial.print("failed with state ");
-        Serial.print(mqtt_client.state());
-        delay(2000);
-    }
-  }
+  String client_id = "2esp32-client-";
+  client_id += serial_number;
+  Serial.printf("The client %s connects to the CASI MQTT broker\n", client_id.c_str());
+  mqttClient.setClientId(client_id.c_str());
+  mqttClient.connect();
 
   // set i2c buffers 0
   memset(buffer, 0, sizeof(buffer));
   memset(i2c_buffer, 0, sizeof(i2c_buffer));
 
   i2c_address = searchI2C();
-
-  //Analog Writing
-  pinMode(A3, OUTPUT);
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  while (!mqtt_client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    String client_id = "esp32-client-";
-    client_id += serial_number;
-    if (mqtt_client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
-      Serial.println("connected");
-      // Subscribe
-      if (mqtt_client.subscribe("casi/production/out/0CB815D62698/ao3"))
-      {
-        Serial.println("Subcribed: casi/production/out/0CB815D62698/ao3");
-      }
-      
-      
-      // mqtt_client.subscribe((topic_out + "/+").c_str());
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqtt_client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
 }
  
 void loop() {
@@ -121,15 +168,10 @@ void loop() {
     WiFi.reconnect();
     previousMillis = currentMillis;
   }
-  if (!mqtt_client.connected()) {
-    reconnect();
-  }
 
-  mqtt_client.loop();
 
   Serial.println("Reading I2C...");
   // i2c_address = 0x68; // default slave address for MPU6050
-
   if (i2c_address) {
     byte bytes_returned = Wire.requestFrom(i2c_address, 14);
     if (bytes_returned>0  ) {
@@ -138,10 +180,6 @@ void loop() {
       while (Wire.available()) { // peripheral may send less than requested
           byte c = Wire.read(); // receive a byte as character
           buffer[i] = c;
-          // Serial.print("(");
-          // Serial.print(i);
-          // Serial.print(")");
-          // Serial.print(c, HEX);         // print the character
           i++;
       }
 
@@ -151,25 +189,19 @@ void loop() {
         
       }
       if (!is_buffer_empty(i2c_buffer, sizeof(i2c_buffer))){
-        mqtt_client.publish((topic_in + "/i2c").c_str(), i2c_buffer, sizeof(i2c_buffer));
+        mqttClient.publish((topic_in + "/i2c").c_str(), 1, true, (char *)i2c_buffer, sizeof(i2c_buffer));
       }
 
-      delay(500);
     }
   }
   
   // Analog Reading
-  // variable for storing the potentiometer value
   int A1Value = analogRead(AI1);
-  Serial.println(A1Value);
-  mqtt_client.publish((topic_in + "/a1").c_str(), String(A1Value).c_str(), sizeof(String(A1Value)));
+  mqttClient.publish((topic_in + "/ai1").c_str(), 1, true, String(A1Value).c_str());
 
   int A2Value = analogRead(AI2);
-  Serial.println(A2Value);
-  mqtt_client.publish((topic_in + "/a2").c_str(), String(A2Value).c_str(), sizeof(String(A2Value)));
+  mqttClient.publish((topic_in + "/ai2").c_str(), 1, true, String(A2Value).c_str());
 
-  
-  
   delay(4000);
 }
 
@@ -192,29 +224,4 @@ void initWiFi() {
     delay(1000);
   }
   Serial.println(WiFi.localIP());
-}
-
-void mqttCallback(char *topic, byte *payload, unsigned int length) {
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
-  String messageTemp;
-
-  for (int i = 0; i < length; i++) {
-    messageTemp += (char)payload[i];
-  }
-  Serial.println(messageTemp);
-
-  if (String(topic) == topic_out+"/ao3")
-  {
-    Serial.print("Changing output AO3 to ");
-    Serial.println(messageTemp);
-    analogWrite(AO3, messageTemp.toInt());
-    
-  } else if(String(topic) == topic_out+"/ao4"){
-    Serial.print("Changing output AO4 to ");
-    Serial.println(messageTemp);
-    analogWrite(AO4, messageTemp.toInt());
-  }
-  
 }
