@@ -4,6 +4,8 @@
 #include <AsyncMqttClient.h>
 #include <Ticker.h>
 #include <Preferences.h>
+#include <ESPAsyncWebServer.h>
+#include "SPIFFS.h"
 
 #include <I2C_Search.h>
 
@@ -20,6 +22,9 @@ String password;
 // const char* password = "1JhLgena";
 unsigned long previousMillis = 0;
 unsigned long interval = 30000;
+
+bool wifi_failed = false;
+IPAddress ip;
 
 // MQTT Broker
 String mqtt_broker;
@@ -46,16 +51,64 @@ const int AI2 = 35;
 const int AO3 = 2;
 const int AO4 = 4;
 
+//=============================================================
+const char *PARAM_INPUT_1 = "output";
+const char *PARAM_INPUT_2 = "state";
+
+// Create AsyncWebServer object on port 80
+AsyncWebServer server(80);
+
+// Initialize SPIFFS
+void initSPIFFS()
+{
+  if (!SPIFFS.begin(true))
+  {
+    Serial.println("An error has occurred while mounting SPIFFS");
+  }
+  Serial.println("SPIFFS mounted successfully");
+}
+
+String outputState(int output)
+{
+  if (digitalRead(output))
+  {
+    return "checked";
+  }
+  else
+  {
+    return "";
+  }
+}
+
+// Replaces placeholder with button section in your web page
+String processor(const String &var)
+{
+  // Serial.println(var);
+  //  if(var == "BUTTONPLACEHOLDER"){
+  //    String buttons = "";
+  //    buttons += "<h4>Output - GPIO 26</h4><label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleCheckbox(this)\" id=\"26\" " + outputState(26) + "><span class=\"slider\"></span></label>";
+  //    buttons += "<h4>Output - GPIO 4</h4><label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleCheckbox(this)\" id=\"4\" " + outputState(4) + "><span class=\"slider\"></span></label>";
+  //    buttons += "<h4>Output - GPIO 33</h4><label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleCheckbox(this)\" id=\"33\" " + outputState(33) + "><span class=\"slider\"></span></label>";
+  //    return buttons;
+  //  }
+  return String();
+}
+
+//=============================================================
+
 // put function declarations here:
 void initWiFi();
 bool is_buffer_empty(const uint8_t *buffer, size_t size);
+void setRoutes();
 
 //--------------------------------------------------------
-void connectToMqtt() {
+void connectToMqtt()
+{
   Serial.println("Connecting to MQTT...");
   mqttClient.connect();
 }
-void onMqttConnect(bool sessionPresent) {
+void onMqttConnect(bool sessionPresent)
+{
   Serial.println("Connected to MQTT.");
   Serial.print("Session present: ");
   Serial.println(sessionPresent);
@@ -63,15 +116,18 @@ void onMqttConnect(bool sessionPresent) {
   Serial.print("Subscribing at QoS 2, packetId: ");
   Serial.println(packetIdSub);
 }
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
+{
   Serial.println("Disconnected from MQTT.");
 
-  if (WiFi.isConnected()) {
+  if (WiFi.isConnected())
+  {
     mqttReconnectTimer.once(2, connectToMqtt);
   }
 }
 
-void onMqttSubscribe(uint16_t packetId, uint8_t qos) {
+void onMqttSubscribe(uint16_t packetId, uint8_t qos)
+{
   Serial.println("Subscribe acknowledged.");
   Serial.print("  packetId: ");
   Serial.println(packetId);
@@ -79,13 +135,15 @@ void onMqttSubscribe(uint16_t packetId, uint8_t qos) {
   Serial.println(qos);
 }
 
-void onMqttUnsubscribe(uint16_t packetId) {
+void onMqttUnsubscribe(uint16_t packetId)
+{
   Serial.println("Unsubscribe acknowledged.");
   Serial.print("  packetId: ");
   Serial.println(packetId);
 }
 
-void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
+void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total)
+{
   Serial.println("Publish received.");
   Serial.print("  topic: ");
   // Serial.println(topic);
@@ -106,38 +164,42 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
 
   String messageTemp;
 
-  for (int i = 0; i < len; i++) {
+  for (int i = 0; i < len; i++)
+  {
     messageTemp += (char)payload[i];
   }
   Serial.println(messageTemp);
 
-  if (String(topic) == topic_out+"/ao3")
+  if (String(topic) == topic_out + "/ao3")
   {
     Serial.print("Changing output AO3 to ");
     Serial.println(messageTemp);
     analogWrite(AO3, messageTemp.toInt());
-    
-  } else if(String(topic) == topic_out+"/ao4"){
+  }
+  else if (String(topic) == topic_out + "/ao4")
+  {
     Serial.print("Changing output AO4 to ");
     Serial.println(messageTemp);
     analogWrite(AO4, messageTemp.toInt());
   }
 }
 
-void onMqttPublish(uint16_t packetId) {
+void onMqttPublish(uint16_t packetId)
+{
   // Serial.println("Publish acknowledged.");
   // Serial.print("  packetId: ");
   // Serial.println(packetId);
 }
 
-void setup() {
+void setup()
+{
   preferences.begin("MQTT", false);
-  preferences.putString("ssid", "Dialog 4G 707");
-  preferences.putString("password", "1JhLgena");
-  preferences.putString("mqtt_broker", "mqtt.casi.io");
-  preferences.putString("mqtt_username", "hellotest2");
-  preferences.putString("mqtt_password", "1234asd2f");
-  preferences.putString("mqtt_port", "1883");
+  // preferences.putString("ssid", "Dialog 4G 707");
+  // preferences.putString("password", "1JhLgena");
+  // preferences.putString("mqtt_broker", "mqtt.casi.io");
+  // preferences.putString("mqtt_username", "hellotest2");
+  // preferences.putString("mqtt_password", "1234asd2f");
+  // preferences.putString("mqtt_port", "1883");
 
   ssid = preferences.getString("ssid");
   password = preferences.getString("password");
@@ -149,6 +211,7 @@ void setup() {
   Wire.begin();
   Serial.begin(9600);
   Serial.println("\nI2C Scanner");
+  initSPIFFS();
 
   mqttClient.onConnect(onMqttConnect);
   mqttClient.onDisconnect(onMqttDisconnect);
@@ -159,93 +222,321 @@ void setup() {
 
   mqttClient.setServer(mqtt_broker.c_str(), mqtt_port);
   mqttClient.setCredentials(mqtt_username.c_str(), mqtt_password.c_str());
-  
+
   initWiFi();
   Serial.print("RSSI: ");
   Serial.println(WiFi.RSSI());
 
-  serial_number = String(WiFi.macAddress());
-  serial_number.replace(":", "");
-  topic_in = String(topic_in_prefix) + serial_number;
-  topic_out = String(topic_out_prefix) + serial_number;
+  if (wifi_failed)
+  {
+    /* code */
+    // Connect to Wi-Fi network with SSID and password
+    Serial.println("Setting AP (Access Point)");
+    // NULL sets an open Access Point
+    WiFi.softAP("ESP-WIFI-MANAGER", "12345678");
 
-  String client_id = "2esp32-client-";
-  client_id += serial_number;
-  Serial.printf("The client %s connects to the CASI MQTT broker\n", client_id.c_str());
-  mqttClient.setClientId(client_id.c_str());
-  mqttClient.connect();
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("AP IP address: ");
+    Serial.println(IP);
+    ip = IP;
 
-  // set i2c buffers 0
-  memset(buffer, 0, sizeof(buffer));
-  memset(i2c_buffer, 0, sizeof(i2c_buffer));
+    server.serveStatic("/", SPIFFS, "/");
 
-  i2c_address = searchI2C();
-}
- 
-void loop() {
-  unsigned long currentMillis = millis();
-  // if WiFi is down, try reconnecting every CHECK_WIFI_TIME seconds
-  if ((WiFi.status() != WL_CONNECTED) && (currentMillis - previousMillis >=interval)) {
-    Serial.print(millis());
-    Serial.println("Reconnecting to WiFi...");
-    WiFi.disconnect();
-    WiFi.reconnect();
-    previousMillis = currentMillis;
+    // Web Server Root URL
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+              {
+                request->send(SPIFFS, "/index.html", "text/html");
+                // request->send_P(200, "text/html", index_html, processor);
+                // request->send(200, "text/html","OK");
+              });
+
+    server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
+              { request->send(SPIFFS, "/mqtt.html", "text/html"); });
+
+    server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
+              {
+      int params = request->params();
+      for(int i=0;i<params;i++){
+        AsyncWebParameter* p = request->getParam(i);
+        if(p->isPost()){
+          // HTTP POST ssid value
+          if (p->name() == "ssid") {
+            String new_ssid = p->value();
+            Serial.print("SSID set to: ");
+            Serial.println(new_ssid);
+            // Write file to save value
+            preferences.putString("ssid", new_ssid);
+          }
+          // HTTP POST pass value
+          if (p->name() == "password") {
+            String new_pass = p->value();
+            Serial.print("Password set to: ");
+            Serial.println(new_pass);
+            // Write file to save value
+            preferences.putString("password", new_pass);
+          }
+        }
+      }
+      request->send(200, "text/plain", "Done. ESP will restart.");
+      delay(3000);
+      ESP.restart(); });
+
+    server.on("/mqtt", HTTP_POST, [](AsyncWebServerRequest *request)
+              {
+      int params = request->params();
+      for(int i=0;i<params;i++){
+        AsyncWebParameter* p = request->getParam(i);
+        if(p->isPost()){
+          // HTTP POST ssid value
+          if (p->name() == "mqtt_broker") {
+            String new_mqtt_broker = p->value();
+            Serial.print("SSID set to: ");
+            Serial.println(new_mqtt_broker);
+            // Write file to save value
+            preferences.putString("mqtt_broker", new_mqtt_broker);
+          }
+          // HTTP POST mqtt_username value
+          if (p->name() == "mqtt_username") {
+            String new_mqtt_username = p->value();
+            Serial.print("Password set to: ");
+            Serial.println(new_mqtt_username);
+            // Write file to save value
+            preferences.putString("password", new_mqtt_username);
+          }
+          // HTTP POST mqtt_username value
+          if (p->name() == "mqtt_password") {
+            String new_mqtt_password = p->value();
+            Serial.print("Password set to: ");
+            Serial.println(new_mqtt_password);
+            // Write file to save value
+            preferences.putString("password", new_mqtt_password);
+          }
+          // HTTP POST mqtt_username value
+          if (p->name() == "mqtt_port") {
+            String new_mqtt_port = p->value();
+            Serial.print("Password set to: ");
+            Serial.println(new_mqtt_port);
+            // Write file to save value
+            preferences.putString("password", new_mqtt_port);
+          }
+        }
+      }
+      request->send(200, "text/plain", "Done. ESP will restart.");
+      delay(3000);
+      ESP.restart(); });
+
+    server.begin();
   }
+  else
+  {
+    setRoutes();
 
+    // Start server
+    server.begin();
 
-  Serial.println("Reading I2C...");
-  // i2c_address = 0x68; // default slave address for MPU6050
-  if (i2c_address) {
-    byte bytes_returned = Wire.requestFrom(i2c_address, 14);
-    if (bytes_returned>0  ) {
-      int i = 0;
+    serial_number = String(WiFi.macAddress());
+    serial_number.replace(":", "");
+    topic_in = String(topic_in_prefix) + serial_number;
+    topic_out = String(topic_out_prefix) + serial_number;
 
-      while (Wire.available()) { // peripheral may send less than requested
+    String client_id = "2esp32-client-";
+    client_id += serial_number;
+    Serial.printf("The client %s connects to the CASI MQTT broker\n", client_id.c_str());
+    mqttClient.setClientId(client_id.c_str());
+    mqttClient.connect();
+
+    // set i2c buffers 0
+    memset(buffer, 0, sizeof(buffer));
+    memset(i2c_buffer, 0, sizeof(i2c_buffer));
+
+    i2c_address = searchI2C();
+  }
+}
+
+void loop()
+{
+  // Serial.println(WiFi.status());
+  if (!wifi_failed)
+  {
+    unsigned long currentMillis = millis();
+    // if WiFi is down, try reconnecting every CHECK_WIFI_TIME seconds
+    if ((WiFi.status() != WL_CONNECTED) && (currentMillis - previousMillis >= interval))
+    {
+      Serial.print(millis());
+      Serial.println("Reconnecting to WiFi...");
+      WiFi.disconnect();
+      WiFi.reconnect();
+      previousMillis = currentMillis;
+    }
+
+    Serial.println("Reading I2C...");
+    // i2c_address = 0x68; // default slave address for MPU6050
+    if (i2c_address)
+    {
+      byte bytes_returned = Wire.requestFrom(i2c_address, 14);
+      if (bytes_returned > 0)
+      {
+        int i = 0;
+
+        while (Wire.available())
+        {                       // peripheral may send less than requested
           byte c = Wire.read(); // receive a byte as character
           buffer[i] = c;
           i++;
-      }
+        }
 
-      if (!is_buffer_empty(buffer, sizeof(buffer)))
-      {
-        memcpy(i2c_buffer, buffer, sizeof(buffer));
-        
+        if (!is_buffer_empty(buffer, sizeof(buffer)))
+        {
+          memcpy(i2c_buffer, buffer, sizeof(buffer));
+        }
+        if (!is_buffer_empty(i2c_buffer, sizeof(i2c_buffer)))
+        {
+          mqttClient.publish((topic_in + "/i2c").c_str(), 1, true, (char *)i2c_buffer, sizeof(i2c_buffer));
+        }
       }
-      if (!is_buffer_empty(i2c_buffer, sizeof(i2c_buffer))){
-        mqttClient.publish((topic_in + "/i2c").c_str(), 1, true, (char *)i2c_buffer, sizeof(i2c_buffer));
-      }
-
     }
+
+    // Analog Reading
+    int A1Value = analogRead(AI1);
+    mqttClient.publish((topic_in + "/ai1").c_str(), 1, true, String(A1Value).c_str());
+
+    int A2Value = analogRead(AI2);
+    mqttClient.publish((topic_in + "/ai2").c_str(), 1, true, String(A2Value).c_str());
+
+    delay(4000);
   }
-  
-  // Analog Reading
-  int A1Value = analogRead(AI1);
-  mqttClient.publish((topic_in + "/ai1").c_str(), 1, true, String(A1Value).c_str());
-
-  int A2Value = analogRead(AI2);
-  mqttClient.publish((topic_in + "/ai2").c_str(), 1, true, String(A2Value).c_str());
-
-  delay(4000);
 }
 
 // put function definitions here:
-bool is_buffer_empty(const uint8_t *buffer, size_t size) {
-    for (size_t i = 0; i < size; i++) {
-        if (buffer[i] != 0) { // You can also check for any other specific value here
-            return false;     // If any non-empty value is found, the buffer is not empty
-        }
+bool is_buffer_empty(const uint8_t *buffer, size_t size)
+{
+  for (size_t i = 0; i < size; i++)
+  {
+    if (buffer[i] != 0)
+    {               // You can also check for any other specific value here
+      return false; // If any non-empty value is found, the buffer is not empty
     }
-    return true; // If no non-empty value is found, the buffer is empty
+  }
+  return true; // If no non-empty value is found, the buffer is empty
 }
 
-void initWiFi() {
-  WiFi.mode(WIFI_STA);
+void initWiFi()
+{
+  WiFi.mode(WIFI_AP_STA);
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi ..");
-  while (WiFi.status() != WL_CONNECTED) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    if (attempts > 10)
+    {
+      wifi_failed = true;
+      break;
+    }
+
     Serial.print('.');
+    attempts++;
     delay(1000);
   }
-  Serial.println(WiFi.localIP());
+
+  if (!wifi_failed)
+  {
+    ip = WiFi.localIP();
+    Serial.println(ip);
+  }
+}
+
+void setRoutes()
+{
+  // Route for root / web page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+            { 
+    // request->send_P(200, "text/html", index_html, processor);
+    request->send(SPIFFS, "/index.html", "text/html"); });
+
+  server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(SPIFFS, "/mqtt.html", "text/html"); });
+
+  server.on("/getWiFiData", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    String existing_ssid = preferences.getString("ssid");
+    String existing_password = preferences.getString("password");
+    request->send(200, "application/json", "{ \"ssid\" : \""+existing_ssid+"\", \"password\": \""+existing_password+"\"}"); });
+
+  server.on("/loadMQTTData", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    String existing_ssid = preferences.getString("ssid");
+    String existing_password = preferences.getString("password");
+    request->send(200, "application/json", "{ \"mqtt_broker\" : \""+preferences.getString("mqtt_broker")+"\", \"mqtt_username\": \""+preferences.getString("mqtt_username")+"\", \"mqtt_password\": \""+preferences.getString("mqtt_password")+"\", \"mqtt_port\": \""+preferences.getString("mqtt_port")+"\"}"); });
+
+  server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+    String new_ssid;
+    String new_password;
+
+    int params = request->params();
+    for (int i = 0; i < params; i++){
+      AsyncWebParameter* p = request->getParam(i);
+      if (p->name()=="ssid")
+      {
+        new_ssid = p->value();
+      }
+      else if (p->name()=="password")
+      {
+        new_password = p->value();
+      }
+      
+      Serial.printf("POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
+    }
+
+    preferences.putString("ssid", new_ssid);
+    preferences.putString("password", new_password);
+    request->send(200, "text/plain", "Updated. Restarting the Device.");
+    // request->redirect("/"); 
+    delay(3000);
+    ESP.restart(); });
+
+  server.on("/mqtt", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+      int params = request->params();
+      for(int i=0;i<params;i++){
+        AsyncWebParameter* p = request->getParam(i);
+        if(p->isPost()){
+          // HTTP POST ssid value
+          if (p->name() == "mqtt_broker") {
+            String new_mqtt_broker = p->value();
+            Serial.print("SSID set to: ");
+            Serial.println(new_mqtt_broker);
+            // Write file to save value
+            preferences.putString("mqtt_broker", new_mqtt_broker);
+          }
+          // HTTP POST mqtt_username value
+          if (p->name() == "mqtt_username") {
+            String new_mqtt_username = p->value();
+            Serial.print("Password set to: ");
+            Serial.println(new_mqtt_username);
+            // Write file to save value
+            preferences.putString("password", new_mqtt_username);
+          }
+          // HTTP POST mqtt_username value
+          if (p->name() == "mqtt_password") {
+            String new_mqtt_password = p->value();
+            Serial.print("Password set to: ");
+            Serial.println(new_mqtt_password);
+            // Write file to save value
+            preferences.putString("password", new_mqtt_password);
+          }
+          // HTTP POST mqtt_username value
+          if (p->name() == "mqtt_port") {
+            String new_mqtt_port = p->value();
+            Serial.print("Password set to: ");
+            Serial.println(new_mqtt_port);
+            // Write file to save value
+            preferences.putString("password", new_mqtt_port);
+          }
+        }
+      }
+      request->send(200, "text/plain", "Done. ESP will restart.");
+      delay(3000);
+      ESP.restart(); });
 }
