@@ -3,30 +3,39 @@
 #include <WiFi.h>
 #include <AsyncMqttClient.h>
 #include <Ticker.h>
+#include <Preferences.h>
 
 #include <I2C_Search.h>
 
 // variable declarations
+Preferences preferences;
+
 byte i2c_address;
 uint8_t buffer[40];
 uint8_t i2c_buffer[40];
 String serial_number;
-const char* ssid = "Dialog 4G 707";
-const char* password = "1JhLgena";
+String ssid;
+String password;
+// const char* ssid = "Dialog 4G 707";
+// const char* password = "1JhLgena";
 unsigned long previousMillis = 0;
 unsigned long interval = 30000;
 
 // MQTT Broker
-const char *mqtt_broker = "mqtt.casi.io";
+String mqtt_broker;
 const char *topic_in_prefix = "casi/production/in/";
 const char *topic_out_prefix = "casi/production/out/";
-const char *mqtt_username = "hellotest2";
-const char *mqtt_password = "1234asd2f";
-const int mqtt_port = 1883;
+String mqtt_username;
+String mqtt_password;
+int mqtt_port;
+// const char *mqtt_broker = "mqtt.casi.io";
+// const char *topic_in_prefix = "casi/production/in/";
+// const char *topic_out_prefix = "casi/production/out/";
+// const char *mqtt_username = "hellotest2";
+// const char *mqtt_password = "1234asd2f";
+// int mqtt_port = 1883;
 String topic_in;
 String topic_out;
-
-// WiFiClient espClient;
 
 AsyncMqttClient mqttClient;
 Ticker mqttReconnectTimer;
@@ -122,6 +131,21 @@ void onMqttPublish(uint16_t packetId) {
 }
 
 void setup() {
+  preferences.begin("MQTT", false);
+  preferences.putString("ssid", "Dialog 4G 707");
+  preferences.putString("password", "1JhLgena");
+  preferences.putString("mqtt_broker", "mqtt.casi.io");
+  preferences.putString("mqtt_username", "hellotest2");
+  preferences.putString("mqtt_password", "1234asd2f");
+  preferences.putString("mqtt_port", "1883");
+
+  ssid = preferences.getString("ssid");
+  password = preferences.getString("password");
+  mqtt_broker = preferences.getString("mqtt_broker");
+  mqtt_username = preferences.getString("mqtt_username");
+  mqtt_password = preferences.getString("mqtt_password");
+  mqtt_port = preferences.getString("mqtt_port").toInt();
+
   Wire.begin();
   Serial.begin(9600);
   Serial.println("\nI2C Scanner");
@@ -133,8 +157,8 @@ void setup() {
   mqttClient.onMessage(onMqttMessage);
   mqttClient.onPublish(onMqttPublish);
 
-  mqttClient.setServer(mqtt_broker, mqtt_port);
-  mqttClient.setCredentials(mqtt_username, mqtt_password);
+  mqttClient.setServer(mqtt_broker.c_str(), mqtt_port);
+  mqttClient.setCredentials(mqtt_username.c_str(), mqtt_password.c_str());
   
   initWiFi();
   Serial.print("RSSI: ");
