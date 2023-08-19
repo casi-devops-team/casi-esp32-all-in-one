@@ -24,6 +24,10 @@ String password;
 unsigned long previousMillis = 0;
 unsigned long interval = 30000;
 
+// for MQTT
+unsigned long previousMillisMQTT = 0;
+unsigned long mqttInterval = 5000;
+
 bool wifi_failed = false;
 IPAddress ip;
 
@@ -57,6 +61,7 @@ const char *PARAM_INPUT_2 = "state";
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
 
 // Initialize SPIFFS
 void initSPIFFS()
@@ -114,6 +119,7 @@ String processor(const String &var)
 void initWiFi();
 bool is_buffer_empty(const uint8_t *buffer, size_t size);
 void setRoutes();
+void notifyGPIOStatus(int pin_id, String value);
 
 //--------------------------------------------------------
 void connectToMqtt()
@@ -130,12 +136,13 @@ void onMqttConnect(bool sessionPresent)
   {
     if (pin_modes[i] == "do")
     {
-      uint16_t packetIdSub = mqttClient.subscribe((topic_out+"/do"+String(i)).c_str(), 1);
+      uint16_t packetIdSub = mqttClient.subscribe((topic_out + "/do" + String(i)).c_str(), 1);
       Serial.print("Subscribing at QoS 1, packetId: ");
       Serial.println(packetIdSub);
-    } else if (pin_modes[i] == "ao")
+    }
+    else if (pin_modes[i] == "ao")
     {
-      uint16_t packetIdSub = mqttClient.subscribe((topic_out+"/ao"+String(i)).c_str(), 1);
+      uint16_t packetIdSub = mqttClient.subscribe((topic_out + "/ao" + String(i)).c_str(), 1);
       Serial.print("Subscribing at QoS 1, packetId: ");
       Serial.println(packetIdSub);
     }
@@ -380,6 +387,7 @@ void setup()
   }
   else
   {
+    server.addHandler(&ws);
     setRoutes();
 
     // Start server
@@ -425,6 +433,9 @@ void loop()
   // Serial.println(WiFi.status());
   if (!wifi_failed)
   {
+    unsigned long currentMillisMQTT = millis();
+    bool mqttPublished = false;
+
     unsigned long currentMillis = millis();
     // if WiFi is down, try reconnecting every CHECK_WIFI_TIME seconds
     if ((WiFi.status() != WL_CONNECTED) && (currentMillis - previousMillis >= interval))
@@ -458,26 +469,45 @@ void loop()
         }
         if (!is_buffer_empty(i2c_buffer, sizeof(i2c_buffer)))
         {
-          mqttClient.publish((topic_in + "/i2c").c_str(), 1, true, (char *)i2c_buffer, sizeof(i2c_buffer));
+          if (currentMillisMQTT - previousMillisMQTT >= mqttInterval)
+          {
+            mqttClient.publish((topic_in + "/i2c").c_str(), 1, true, (char *)i2c_buffer, sizeof(i2c_buffer));
+            mqttPublished = true;
+          }
         }
       }
     }
-   
+
     for (int i : pins)
     {
       if (pin_modes[i] == "di") // Digital Reading
       {
-        mqttClient.publish((topic_in + "/di" + String(i)).c_str(), 1, true, String(digitalRead(i)).c_str());
+        String val = String(digitalRead(i));
+        if (currentMillisMQTT - previousMillisMQTT >= mqttInterval)
+        {
+          mqttClient.publish((topic_in + "/di" + String(i)).c_str(), 1, true, val.c_str());
+          mqttPublished = true;
+        }
+        notifyGPIOStatus(i, val);
       }
       else if (pin_modes[i] == "ai") // Analog Reading
       {
         int analog_reading = analogRead(i);
-        mqttClient.publish((topic_in + "/ai"+ String(i)).c_str(), 1, true, String(analog_reading).c_str());
+        if (currentMillisMQTT - previousMillisMQTT >= mqttInterval)
+        {
+          mqttClient.publish((topic_in + "/ai" + String(i)).c_str(), 1, true, String(analog_reading).c_str());
+          mqttPublished = true;
+        }
+        notifyGPIOStatus(i, String(analog_reading));
       }
-      
     }
 
-    delay(4000);
+    if (mqttPublished)
+    {
+      previousMillisMQTT = currentMillisMQTT;
+    }
+
+    delay(500);
   }
 }
 
@@ -649,4 +679,9 @@ void setRoutes()
       preferences.putString(p->name().c_str(), p->value().c_str());
     }
     request->redirect("/pins"); });
+}
+
+void notifyGPIOStatus(int pin_id, String value)
+{
+  ws.textAll("{ \"p" + String(pin_id) + "\": \"" + value + "\" }");
 }
