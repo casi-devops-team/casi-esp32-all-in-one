@@ -6,6 +6,7 @@
 #include <Preferences.h>
 #include <ESPAsyncWebServer.h>
 #include "SPIFFS.h"
+#include <map>
 
 #include <I2C_Search.h>
 
@@ -45,11 +46,10 @@ String topic_out;
 AsyncMqttClient mqttClient;
 Ticker mqttReconnectTimer;
 
-// Analog Reading
-const int AI1 = 34;
-const int AI2 = 35;
-const int AO3 = 2;
-const int AO4 = 4;
+// GPIO Pins
+const int pins[20] = {2, 5, 12, 13, 14, 15, 16, 17, 18, 19, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39};
+
+std::map<int, String> pin_modes;
 
 //=============================================================
 const char *PARAM_INPUT_1 = "output";
@@ -83,7 +83,21 @@ String outputState(int output)
 // Replaces placeholder with button section in your web page
 String processor(const String &var)
 {
-  // Serial.println(var);
+  if (var == "WIFISTATUSPLACEHOLDER")
+  {
+    String statusText = "";
+    if ((WiFi.status() == WL_CONNECTED))
+    {
+      String client_ip = WiFi.localIP().toString();
+      statusText = "Status: Connected to " + ssid + ". Go to " + client_ip + ".";
+    }
+    else
+    {
+      statusText = "Status: Not Connected";
+    }
+    return statusText;
+  }
+
   //  if(var == "BUTTONPLACEHOLDER"){
   //    String buttons = "";
   //    buttons += "<h4>Output - GPIO 26</h4><label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleCheckbox(this)\" id=\"26\" " + outputState(26) + "><span class=\"slider\"></span></label>";
@@ -112,9 +126,20 @@ void onMqttConnect(bool sessionPresent)
   Serial.println("Connected to MQTT.");
   Serial.print("Session present: ");
   Serial.println(sessionPresent);
-  uint16_t packetIdSub = mqttClient.subscribe("casi/production/out/0CB815D62698/ao3", 2);
-  Serial.print("Subscribing at QoS 2, packetId: ");
-  Serial.println(packetIdSub);
+  for (int i : pins)
+  {
+    if (pin_modes[i] == "do")
+    {
+      uint16_t packetIdSub = mqttClient.subscribe((topic_out+"/do"+String(i)).c_str(), 1);
+      Serial.print("Subscribing at QoS 1, packetId: ");
+      Serial.println(packetIdSub);
+    } else if (pin_modes[i] == "ao")
+    {
+      uint16_t packetIdSub = mqttClient.subscribe((topic_out+"/ao"+String(i)).c_str(), 1);
+      Serial.print("Subscribing at QoS 1, packetId: ");
+      Serial.println(packetIdSub);
+    }
+  }
 }
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
 {
@@ -170,17 +195,42 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties 
   }
   Serial.println(messageTemp);
 
-  if (String(topic) == topic_out + "/ao3")
+  // Witing to pins
+  for (int i : pins)
   {
-    Serial.print("Changing output AO3 to ");
-    Serial.println(messageTemp);
-    analogWrite(AO3, messageTemp.toInt());
-  }
-  else if (String(topic) == topic_out + "/ao4")
-  {
-    Serial.print("Changing output AO4 to ");
-    Serial.println(messageTemp);
-    analogWrite(AO4, messageTemp.toInt());
+    if (pin_modes[i] == "do") // Digital write
+    {
+      if (String(topic) == topic_out + "/do" + String(i))
+      {
+        Serial.print("Changing output DO" + String(i) + " to ");
+        Serial.println(messageTemp);
+        if (messageTemp == "1" || messageTemp == "true")
+        {
+          digitalWrite(i, HIGH);
+        }
+        else if (messageTemp == "0" || messageTemp == "false")
+        {
+          digitalWrite(i, LOW);
+        }
+      }
+    }
+    else if (pin_modes[i] == "ao") // Analog write
+    {
+      if (String(topic) == topic_out + "/ao" + String(i))
+      {
+        Serial.print("Changing output AO" + String(i) + " to ");
+        Serial.println(messageTemp);
+        if (messageTemp.toInt() > 255)
+        {
+          messageTemp = "255";
+        }
+        else if (messageTemp.toInt() < 0)
+        {
+          messageTemp = "0";
+        }
+        analogWrite(i, messageTemp.toInt());
+      }
+    }
   }
 }
 
@@ -191,6 +241,7 @@ void onMqttPublish(uint16_t packetId)
   // Serial.println(packetId);
 }
 
+//=======================================Setup=========================================
 void setup()
 {
   preferences.begin("MQTT", false);
@@ -245,8 +296,8 @@ void setup()
     // Web Server Root URL
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
               {
-                request->send(SPIFFS, "/index.html", "text/html");
-                // request->send_P(200, "text/html", index_html, processor);
+                request->send(SPIFFS, "/index.html", "text/html", false, processor);
+                // request->send_P(200, "text/html", "/index.html", processor);
                 // request->send(200, "text/html","OK");
               });
 
@@ -350,6 +401,22 @@ void setup()
     memset(i2c_buffer, 0, sizeof(i2c_buffer));
 
     i2c_address = searchI2C();
+
+    // Digital Read/Write
+    // Digital Pin Configuartion
+    for (int i : pins)
+    {
+      String mode = preferences.getString(("p" + String(i)).c_str());
+      pin_modes[i] = mode;
+      if (mode == "di")
+      {
+        pinMode(i, INPUT);
+      }
+      else if (mode == "do")
+      {
+        pinMode(i, OUTPUT);
+      }
+    }
   }
 }
 
@@ -395,13 +462,20 @@ void loop()
         }
       }
     }
-
-    // Analog Reading
-    int A1Value = analogRead(AI1);
-    mqttClient.publish((topic_in + "/ai1").c_str(), 1, true, String(A1Value).c_str());
-
-    int A2Value = analogRead(AI2);
-    mqttClient.publish((topic_in + "/ai2").c_str(), 1, true, String(A2Value).c_str());
+   
+    for (int i : pins)
+    {
+      if (pin_modes[i] == "di") // Digital Reading
+      {
+        mqttClient.publish((topic_in + "/di" + String(i)).c_str(), 1, true, String(digitalRead(i)).c_str());
+      }
+      else if (pin_modes[i] == "ai") // Analog Reading
+      {
+        int analog_reading = analogRead(i);
+        mqttClient.publish((topic_in + "/ai"+ String(i)).c_str(), 1, true, String(analog_reading).c_str());
+      }
+      
+    }
 
     delay(4000);
   }
@@ -448,14 +522,18 @@ void initWiFi()
 
 void setRoutes()
 {
+  server.serveStatic("/", SPIFFS, "/");
   // Route for root / web page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             { 
     // request->send_P(200, "text/html", index_html, processor);
-    request->send(SPIFFS, "/index.html", "text/html"); });
+    request->send(SPIFFS, "/index.html", "text/html", false, processor); });
 
   server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
             { request->send(SPIFFS, "/mqtt.html", "text/html"); });
+
+  server.on("/pins", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(SPIFFS, "/pins.html", "text/html"); });
 
   server.on("/getWiFiData", HTTP_GET, [](AsyncWebServerRequest *request)
             {
@@ -468,6 +546,27 @@ void setRoutes()
     String existing_ssid = preferences.getString("ssid");
     String existing_password = preferences.getString("password");
     request->send(200, "application/json", "{ \"mqtt_broker\" : \""+preferences.getString("mqtt_broker")+"\", \"mqtt_username\": \""+preferences.getString("mqtt_username")+"\", \"mqtt_password\": \""+preferences.getString("mqtt_password")+"\", \"mqtt_port\": \""+preferences.getString("mqtt_port")+"\"}"); });
+
+  server.on("/loadPinsData", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+              String response = "{ \"pins\": {";
+              size_t count = sizeof(pins) / sizeof(int);
+              for (size_t i = 0; i < count; i++)
+              {
+                response += "\"p" + String(pins[i]) + "\": ";
+                response += "\"" + preferences.getString(("p" + String(pins[i])).c_str()) + "\"";
+                if (i != (count-1))
+                {
+                  response += ", ";
+                }
+                else
+                {
+                  response += " ";
+                }
+              }
+              response += "}}";
+
+              request->send(200, "application/json", response); });
 
   server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
             {
@@ -539,4 +638,15 @@ void setRoutes()
       request->send(200, "text/plain", "Done. ESP will restart.");
       delay(3000);
       ESP.restart(); });
+
+  server.on("/pins", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+    int params = request->params();
+    for (int i = 0; i < params; i++){
+      AsyncWebParameter* p = request->getParam(i);
+      String key = p->name();
+      String value = p->value();
+      preferences.putString(p->name().c_str(), p->value().c_str());
+    }
+    request->redirect("/pins"); });
 }

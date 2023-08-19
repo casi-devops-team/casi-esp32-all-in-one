@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            font-family: "Lato", sans-serif;
+        }
+
+        .sidebar {
+            margin: 0;
+            padding: 0;
+            width: 200px;
+            background-color: #f1f1f1;
+            position: fixed;
+            height: 100%;
+            overflow: auto;
+        }
+
+        .sidebar a {
+            display: block;
+            color: black;
+            padding: 16px;
+            text-decoration: none;
+        }
+
+        .sidebar a.active {
+            background-color: #04AA6D;
+            color: white;
+        }
+
+        .sidebar a:hover:not(.active) {
+            background-color: #555;
+            color: white;
+        }
+
+        div.content {
+            margin-left: 200px;
+            padding: 1px 16px;
+            height: 1000px;
+        }
+
+        @media screen and (max-width: 700px) {
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+            }
+
+            .sidebar a {
+                float: left;
+            }
+
+            div.content {
+                margin-left: 0;
+            }
+        }
+
+        @media screen and (max-width: 400px) {
+            .sidebar a {
+                text-align: center;
+                float: none;
+            }
+        }
+    </style>
+    <style>
+        html {
+            font-family: Helvetica;
+            display: inline-block;
+            margin: 0px auto;
+            text-align: center;
+        }
+
+        .form {
+            font-family: "Source Sans Pro", sans-serif;
+            font-size: 16px;
+            padding: 20px;
+        }
+
+        .form * {
+            box-sizing: border-box;
+            line-height: 1.5;
+        }
+
+        .form__title {
+            font-size: 2em;
+            font-weight: 600;
+        }
+
+        .form__desc {
+            text-align: left;
+        }
+
+        .form__item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form__item>* {
+            align-self: flex-start;
+        }
+
+        .form__label {
+            font-weight: 600;
+            padding: 10px 0;
+        }
+
+        .form__input {
+            -webkit-appearance: none;
+
+            width: 100%;
+            max-width: 425px;
+
+            /* Fix for Safari/iOS date fields */
+            min-height: calc(0.9em + (0.8em * 2) + 0.6em);
+
+            padding: 0.8em;
+            font-size: 0.9em;
+            font-family: "Source Sans Pro", sans-serif;
+
+            outline: none;
+            border: 1px solid #dddddd;
+            border-radius: 4px;
+            background: #f9f9f9;
+            transition: background 0.25s, border-color 0.25s, color 0.25s;
+        }
+
+        .form__input:focus {
+            background: #ffffff;
+        }
+
+        .form__input::placeholder {
+            color: #bbbbbb;
+        }
+
+        .form__input--error {
+            color: #d50000;
+            background: #fff8f8;
+            border-color: #d50000;
+        }
+
+        .form__input--error::placeholder {
+            color: #ffbfbf;
+        }
+
+        .form__error {
+            padding-top: 10px;
+            color: #d50000;
+            font-size: 0.9em;
+            visibility: hidden;
+        }
+
+        .form__input--error+.form__error {
+            visibility: visible;
+        }
+
+        .form__input--small {
+            max-width: 250px;
+        }
+
+        textarea.form__input {
+            resize: none;
+            min-height: 200px;
+        }
+
+        .form__btn {
+            font-family: "Source Sans Pro", sans-serif;
+            font-weight: 600;
+            font-size: 1.1em;
+            padding: 10px 16px;
+            margin: 10px 0;
+
+            color: #ffffff;
+            background: #14b64a;
+            border: 2px solid #0fa942;
+            border-radius: 5px;
+
+            cursor: pointer;
+            outline: none;
+            align-self: center;
+        }
+
+        .form__btn:active {
+            background: #0fa942;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 120px;
+            height: 68px
+        }
+
+        .switch input {
+            display: none
+        }
+
+        .slider {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            border-radius: 6px
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 52px;
+            width: 52px;
+            left: 8px;
+            bottom: 8px;
+            background-color: #fff;
+            -webkit-transition: .4s;
+            transition: .4s;
+            border-radius: 3px
+        }
+
+        .row {
+            display: flex;
+        }
+
+        /* Create two equal columns that sits next to each other */
+        .column {
+            flex: 50%;
+            padding: 10px;
+        }
+
+        table {
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body onload="loadPinsData()">
+
+    <div class="sidebar">
+        <a href="/">Wifi Setup</a>
+        <a href="/mqtt">Mqtt Configuration</a>
+        <a class="active" href="/pins">GPIO Pin Configuration</a>
+    </div>
+
+
+    <div class="content">
+
+        <form class="form" action="/pins" method="POST">
+            <div class="form__title">Pin Configuration</div>
+            <p class="form__desc">
+                Configure GPIO Pins Here.
+            </p>
+            <div class="row">
+                <div class="column">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Pin</th>
+                                <th>Usage</th>
+                                <th>Tag for Casi</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><label for="p2" class="form__label">GPIO 2</label></td>
+                                <td>
+                                    <select id="p2" name="p2" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p2_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p5" class="form__label">GPIO 5</label></td>
+                                <td>
+                                    <select id="p5" name="p5" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p5_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p12" class="form__label">GPIO 12</label></td>
+                                <td>
+                                    <select id="p12" name="p12" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p12_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p13" class="form__label">GPIO 13</label></td>
+                                <td>
+                                    <select id="p13" name="p13" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p13_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p14" class="form__label">GPIO 14</label></td>
+                                <td>
+                                    <select id="p14" name="p14" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p14_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p15" class="form__label">GPIO 15</label></td>
+                                <td>
+                                    <select id="p15" name="p15" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p15_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p16" class="form__label">GPIO 16</label></td>
+                                <td>
+                                    <select id="p16" name="p16" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p16_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p17" class="form__label">GPIO 17</label></td>
+                                <td>
+                                    <select id="p17" name="p17" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p17_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p18" class="form__label">GPIO 18</label></td>
+                                <td>
+                                    <select id="p18" name="p18" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p18_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p19" class="form__label">GPIO 19</label></td>
+                                <td>
+                                    <select id="p19" name="p19" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p19_tag">-</h3>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                </div>
+                <div class="column">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Pin</th>
+                                <th>Usage</th>
+                                <th>Tag for Casi</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><label for="p23" class="form__label">GPIO 23</label></td>
+                                <td>
+                                    <select id="p23" name="p23" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p23_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p25" class="form__label">GPIO 25</label></td>
+                                <td>
+                                    <select id="p25" name="p25" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p25_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p26" class="form__label">GPIO 26</label></td>
+                                <td>
+                                    <select id="p26" name="p26" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p26_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p27" class="form__label">GPIO 27</label></td>
+                                <td>
+                                    <select id="p27" name="p27" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p27_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p32" class="form__label">GPIO 32</label></td>
+                                <td>
+                                    <select id="p32" name="p32" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p32_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p33" class="form__label">GPIO 33</label></td>
+                                <td>
+                                    <select id="p33" name="p33" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="ao">Analog Output</option>
+                                        <option value="di">Digital Input</option>
+                                        <option value="do">Digital Output</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p33_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p34" class="form__label">GPIO 34</label></td>
+                                <td>
+                                    <select id="p34" name="p34" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="di">Digital Input</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p34_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p35" class="form__label">GPIO 35</label></td>
+                                <td>
+                                    <select id="p35" name="p35" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="di">Digital Input</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p35_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p36" class="form__label">GPIO 36</label></td>
+                                <td>
+                                    <select id="p36" name="p36" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="di">Digital Input</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p36_tag">-</h3>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><label for="p39" class="form__label">GPIO 39</label></td>
+                                <td>
+                                    <select id="p39" name="p39" class="form__input">
+                                        <option value="">Select Pin Mode</option>
+                                        <option value="ai">Analog Input</option>
+                                        <option value="di">Digital Input</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <h3 id="p39_tag">-</h3>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="form__item">
+                <button class="form__btn" type="submit">Save</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script>
+        function loadPinsData() {
+            let mqtt_broker = document.getElementById("mqtt_broker");
+            let mqtt_username = document.getElementById("mqtt_username");
+            let mqtt_password = document.getElementById("mqtt_password");
+            let mqtt_port = document.getElementById("mqtt_port");
+            axios.get("/loadPinsData").then((response) => {
+                if (response.data.pins) {
+                    for (const key in response.data.pins) {
+                        if (Object.hasOwnProperty.call(response.data.pins, key)) {
+                            const value = response.data.pins[key];
+                            let element = document.getElementById(key);
+                            element.value = value;
+
+                            if (value != "") {
+                                const pin = key.substring(1);
+                                const tag_element = document.getElementById(key + "_tag");
+                                tag_element.innerHTML = value + pin;
+                            }
+
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+
+</html>
