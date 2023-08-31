@@ -368,7 +368,6 @@ void setup()
     setRoutes();
 
     // server.serveStatic("/", SPIFFS, "/");
-
     // // Web Server Root URL
     // server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
     //           {
@@ -376,10 +375,8 @@ void setup()
     //             // request->send_P(200, "text/html", "/index.html", processor);
     //             // request->send(200, "text/html","OK");
     //           });
-
     // server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
     //           { request->send(SPIFFS, "/mqtt.html", "text/html"); });
-
     // server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
     //           {
     //   int params = request->params();
@@ -407,7 +404,6 @@ void setup()
     //   request->send(200, "text/plain", "Done. ESP will restart.");
     //   delay(3000);
     //   ESP.restart(); });
-
     // server.on("/mqtt", HTTP_POST, [](AsyncWebServerRequest *request)
     //           {
     //   int params = request->params();
