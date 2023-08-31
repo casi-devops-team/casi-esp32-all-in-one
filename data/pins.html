@@ -238,10 +238,7 @@
 
 <body onload="loadPinsData()">
 
-    <div class="sidebar">
-        <a href="/">Wifi Setup</a>
-        <a href="/mqtt">Mqtt Configuration</a>
-        <a class="active" href="/pins">GPIO Pin Configuration</a>
+    <div class="sidebar" id="sidebar">
     </div>
 
 
@@ -640,6 +637,7 @@
     </div>
 
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="/controller.js"></script>
     <script>
         var gateway = `ws://${window.location.hostname}/ws`;
         var websocket;

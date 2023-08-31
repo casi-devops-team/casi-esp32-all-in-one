@@ -223,10 +223,7 @@
 
 <body onload="loadMQTTData()">
 
-    <div class="sidebar">
-        <a href="/">Wifi Setup</a>
-        <a class="active" href="/mqtt">Mqtt Configuration</a>
-        <a href="/pins">GPIO Pin Configuratio</a>
+    <div class="sidebar" id="sidebar">
     </div>
 
 
@@ -267,6 +264,7 @@
     </div>
 
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="/controller.js"></script>
     <script>
         function loadMQTTData() {
             let mqtt_broker = document.getElementById("mqtt_broker");

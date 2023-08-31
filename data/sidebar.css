@@ -11,6 +11,7 @@ body {
     position: fixed;
     height: 100%;
     overflow: auto;
+    text-align: left;
 }
 
 .sidebar a {

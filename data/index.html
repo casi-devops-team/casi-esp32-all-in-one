@@ -9,10 +9,7 @@
 
 <body onload="loadWiFiData()">
 
-    <div class="sidebar">
-        <a class="active" href="/">Wifi Setup</a>
-        <a href="/mqtt">Mqtt Configuration</a>
-        <a href="/pins">GPIO Pin Configuratio</a>
+    <div class="sidebar" id="sidebar">
     </div>
 
 
@@ -21,6 +18,9 @@
             <div class="form__title">WiFi Setup</div>
             <p class="form__desc">
                 %WIFISTATUSPLACEHOLDER%
+            </p>
+            <p class="form__desc">
+                %MACADDRESS%
             </p>
             <p class="form__desc">
                 Set Your Wifi SSID and Password Here.
@@ -44,6 +44,7 @@
     </div>
 
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="/controller.js"></script>
     <script>
         function loadWiFiData() {
             let ssid = document.getElementById("ssid");

@@ -7,8 +7,52 @@
 #include <ESPAsyncWebServer.h>
 #include "SPIFFS.h"
 #include <map>
+#include <esp_now.h>
 
 #include <I2C_Search.h>
+
+typedef struct struct_message
+{
+  char a[32];
+  int b;
+  float c;
+  bool d;
+} struct_message;
+
+typedef struct datapoint
+{
+  uint8_t pinType;
+  uint8_t key;
+  int value;
+  uint8_t i2c_buffer[40];
+} datapoint;
+
+typedef struct net_message
+{
+  int msg_type;
+  char master_mac[17];
+  int slave_pins[20];
+  int slave_pin_config[20];
+  uint8_t slave_id;
+  datapoint data;
+} net_message;
+
+// ESP NET Device Types
+#define MASTER_MODE 0
+#define SLAVE_MODE 1
+
+// ESP NET Message Types
+#define SLAVE_CONFIG 0
+#define MASTER_IN 1
+#define MASTER_OUT 2
+
+// GPIO Pin Modes
+#define AI 0
+#define AO 1
+#define DI 2
+#define DO 3
+#define I2C 4
+#define NA 10
 
 // variable declarations
 Preferences preferences;
@@ -52,8 +96,17 @@ Ticker mqttReconnectTimer;
 
 // GPIO Pins
 const int pins[20] = {2, 5, 12, 13, 14, 15, 16, 17, 18, 19, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39};
+const int slave_pins[20] = {2, 5, 12, 13, 14, 15, 16, 17, 18, 19, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39};
+int slave_pin_mode[20];
 
 std::map<int, String> pin_modes;
+
+// ESP NET Variables
+int deviceMode;
+esp_now_peer_info_t peers[10];
+esp_now_peer_info_t peerMaster;
+uint8_t peersCount = 0;
+net_message dataReceived;
 
 //=============================================================
 const char *PARAM_INPUT_1 = "output";
@@ -94,13 +147,19 @@ String processor(const String &var)
     if ((WiFi.status() == WL_CONNECTED))
     {
       String client_ip = WiFi.localIP().toString();
-      statusText = "Status: Connected to " + ssid + ". Go to " + client_ip + ".";
+      statusText = "Status: <span style=\"color: #00FF00;\">Connected</span> to <b>" + ssid + "</b>. Go to <b>" + client_ip + "</b>.";
     }
     else
     {
-      statusText = "Status: Not Connected";
+      statusText = "Status: <span style=\"color: #FF0000;\">Not Connected</span>";
     }
     return statusText;
+  }
+
+  if (var == "MACADDRESS")
+  {
+    String mac = "MAC Address: " + WiFi.macAddress();
+    return mac;
   }
 
   //  if(var == "BUTTONPLACEHOLDER"){
@@ -120,6 +179,12 @@ void initWiFi();
 bool is_buffer_empty(const uint8_t *buffer, size_t size);
 void setRoutes();
 void notifyGPIOStatus(int pin_id, String value);
+void setPeers(String mac_pref_string);
+void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len);
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
+void setSlavePins();
+void configSlave(net_message slaveConfigMsg);
+void handleMasterIn(net_message masterInMsg);
 
 //--------------------------------------------------------
 void connectToMqtt()
@@ -254,6 +319,8 @@ void setup()
   preferences.begin("MQTT", false);
   // preferences.putString("ssid", "Dialog 4G 707");
   // preferences.putString("password", "1JhLgena");
+  // preferences.putString("ssid", "Dialog 4G");
+  // preferences.putString("password", "Dul8622@");
   // preferences.putString("mqtt_broker", "mqtt.casi.io");
   // preferences.putString("mqtt_username", "hellotest2");
   // preferences.putString("mqtt_password", "1234asd2f");
@@ -267,7 +334,7 @@ void setup()
   mqtt_port = preferences.getString("mqtt_port").toInt();
 
   Wire.begin();
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("\nI2C Scanner");
   initSPIFFS();
 
@@ -291,97 +358,99 @@ void setup()
     // Connect to Wi-Fi network with SSID and password
     Serial.println("Setting AP (Access Point)");
     // NULL sets an open Access Point
-    WiFi.softAP("ESP-WIFI-MANAGER", "12345678");
+    WiFi.softAP("ESP32", "12345678");
 
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
     Serial.println(IP);
     ip = IP;
 
-    server.serveStatic("/", SPIFFS, "/");
+    setRoutes();
 
-    // Web Server Root URL
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-              {
-                request->send(SPIFFS, "/index.html", "text/html", false, processor);
-                // request->send_P(200, "text/html", "/index.html", processor);
-                // request->send(200, "text/html","OK");
-              });
+    // server.serveStatic("/", SPIFFS, "/");
 
-    server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
-              { request->send(SPIFFS, "/mqtt.html", "text/html"); });
+    // // Web Server Root URL
+    // server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+    //           {
+    //             request->send(SPIFFS, "/index.html", "text/html", false, processor);
+    //             // request->send_P(200, "text/html", "/index.html", processor);
+    //             // request->send(200, "text/html","OK");
+    //           });
 
-    server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
-              {
-      int params = request->params();
-      for(int i=0;i<params;i++){
-        AsyncWebParameter* p = request->getParam(i);
-        if(p->isPost()){
-          // HTTP POST ssid value
-          if (p->name() == "ssid") {
-            String new_ssid = p->value();
-            Serial.print("SSID set to: ");
-            Serial.println(new_ssid);
-            // Write file to save value
-            preferences.putString("ssid", new_ssid);
-          }
-          // HTTP POST pass value
-          if (p->name() == "password") {
-            String new_pass = p->value();
-            Serial.print("Password set to: ");
-            Serial.println(new_pass);
-            // Write file to save value
-            preferences.putString("password", new_pass);
-          }
-        }
-      }
-      request->send(200, "text/plain", "Done. ESP will restart.");
-      delay(3000);
-      ESP.restart(); });
+    // server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
+    //           { request->send(SPIFFS, "/mqtt.html", "text/html"); });
 
-    server.on("/mqtt", HTTP_POST, [](AsyncWebServerRequest *request)
-              {
-      int params = request->params();
-      for(int i=0;i<params;i++){
-        AsyncWebParameter* p = request->getParam(i);
-        if(p->isPost()){
-          // HTTP POST ssid value
-          if (p->name() == "mqtt_broker") {
-            String new_mqtt_broker = p->value();
-            Serial.print("SSID set to: ");
-            Serial.println(new_mqtt_broker);
-            // Write file to save value
-            preferences.putString("mqtt_broker", new_mqtt_broker);
-          }
-          // HTTP POST mqtt_username value
-          if (p->name() == "mqtt_username") {
-            String new_mqtt_username = p->value();
-            Serial.print("Password set to: ");
-            Serial.println(new_mqtt_username);
-            // Write file to save value
-            preferences.putString("password", new_mqtt_username);
-          }
-          // HTTP POST mqtt_username value
-          if (p->name() == "mqtt_password") {
-            String new_mqtt_password = p->value();
-            Serial.print("Password set to: ");
-            Serial.println(new_mqtt_password);
-            // Write file to save value
-            preferences.putString("password", new_mqtt_password);
-          }
-          // HTTP POST mqtt_username value
-          if (p->name() == "mqtt_port") {
-            String new_mqtt_port = p->value();
-            Serial.print("Password set to: ");
-            Serial.println(new_mqtt_port);
-            // Write file to save value
-            preferences.putString("password", new_mqtt_port);
-          }
-        }
-      }
-      request->send(200, "text/plain", "Done. ESP will restart.");
-      delay(3000);
-      ESP.restart(); });
+    // server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
+    //           {
+    //   int params = request->params();
+    //   for(int i=0;i<params;i++){
+    //     AsyncWebParameter* p = request->getParam(i);
+    //     if(p->isPost()){
+    //       // HTTP POST ssid value
+    //       if (p->name() == "ssid") {
+    //         String new_ssid = p->value();
+    //         Serial.print("SSID set to: ");
+    //         Serial.println(new_ssid);
+    //         // Write file to save value
+    //         preferences.putString("ssid", new_ssid);
+    //       }
+    //       // HTTP POST pass value
+    //       if (p->name() == "password") {
+    //         String new_pass = p->value();
+    //         Serial.print("Password set to: ");
+    //         Serial.println(new_pass);
+    //         // Write file to save value
+    //         preferences.putString("password", new_pass);
+    //       }
+    //     }
+    //   }
+    //   request->send(200, "text/plain", "Done. ESP will restart.");
+    //   delay(3000);
+    //   ESP.restart(); });
+
+    // server.on("/mqtt", HTTP_POST, [](AsyncWebServerRequest *request)
+    //           {
+    //   int params = request->params();
+    //   for(int i=0;i<params;i++){
+    //     AsyncWebParameter* p = request->getParam(i);
+    //     if(p->isPost()){
+    //       // HTTP POST ssid value
+    //       if (p->name() == "mqtt_broker") {
+    //         String new_mqtt_broker = p->value();
+    //         Serial.print("SSID set to: ");
+    //         Serial.println(new_mqtt_broker);
+    //         // Write file to save value
+    //         preferences.putString("mqtt_broker", new_mqtt_broker);
+    //       }
+    //       // HTTP POST mqtt_username value
+    //       if (p->name() == "mqtt_username") {
+    //         String new_mqtt_username = p->value();
+    //         Serial.print("Password set to: ");
+    //         Serial.println(new_mqtt_username);
+    //         // Write file to save value
+    //         preferences.putString("password", new_mqtt_username);
+    //       }
+    //       // HTTP POST mqtt_username value
+    //       if (p->name() == "mqtt_password") {
+    //         String new_mqtt_password = p->value();
+    //         Serial.print("Password set to: ");
+    //         Serial.println(new_mqtt_password);
+    //         // Write file to save value
+    //         preferences.putString("password", new_mqtt_password);
+    //       }
+    //       // HTTP POST mqtt_username value
+    //       if (p->name() == "mqtt_port") {
+    //         String new_mqtt_port = p->value();
+    //         Serial.print("Password set to: ");
+    //         Serial.println(new_mqtt_port);
+    //         // Write file to save value
+    //         preferences.putString("password", new_mqtt_port);
+    //       }
+    //     }
+    //   }
+    //   request->send(200, "text/plain", "Done. ESP will restart.");
+    //   delay(3000);
+    //   ESP.restart(); });
 
     server.begin();
   }
@@ -426,19 +495,102 @@ void setup()
       }
     }
   }
+
+  // Init ESP-NOW
+  if (esp_now_init() != ESP_OK)
+  {
+    Serial.println("Error initializing ESP NET");
+    // return;
+  }
+  esp_now_register_send_cb(OnDataSent);
+  esp_now_register_recv_cb(OnDataRecv);
+
+  // ESP NET Setup
+  deviceMode = preferences.getInt("device_mode", SLAVE_MODE);
+  if (deviceMode == MASTER_MODE)
+  {
+    setSlavePins();
+    String slave_mac_list_pref = preferences.getString("mac_list");
+    if (slave_mac_list_pref)
+    {
+      setPeers(slave_mac_list_pref);
+    }
+
+    // ESP NET adding peers
+    for (size_t i = 0; i < peersCount; i++)
+    {
+      esp_now_peer_info_t peerInfo = peers[i];
+      if (esp_now_add_peer(&peerInfo) != ESP_OK)
+      {
+        Serial.println("Failed to add peer.");
+        // return;
+      }
+      else
+      {
+        Serial.println("Peer added successfully.");
+      }
+    }
+  }
+  else if (deviceMode == SLAVE_MODE)
+  {
+    uint8_t temp_mac[6];
+    char *macBit = strtok((char *)preferences.getString("master_mac").c_str(), ":");
+    int k = 0;
+    while (macBit != NULL)
+    {
+      int intBit = (int)strtol(macBit, 0, 16);
+      temp_mac[k] = intBit;
+      k++;
+      macBit = strtok(NULL, ":");
+    }
+
+    memcpy(peerMaster.peer_addr, temp_mac, 6);
+    peerMaster.channel = 0;
+    peerMaster.encrypt = false;
+
+    // Add Master Peer
+    if (esp_now_add_peer(&peerMaster) != ESP_OK)
+    {
+      Serial.println("Failed to add master peer.");
+    }
+    else
+    {
+      Serial.println("Master peer added successfully.");
+    }
+  }
+
+  // Slave config message
+  if (deviceMode == MASTER_MODE)
+  {
+    net_message msg;
+    msg.msg_type = SLAVE_CONFIG;
+    strcpy(msg.master_mac, WiFi.macAddress().c_str());
+    memcpy(&msg.slave_pins, slave_pins, sizeof(slave_pins));
+    memcpy(&msg.slave_pin_config, slave_pin_mode, sizeof(slave_pin_mode));
+
+    for (size_t i = 0; i < peersCount; i++)
+    {
+      msg.slave_id = i;
+      esp_err_t result = esp_now_send(peers[i].peer_addr, (uint8_t *)&msg, sizeof(msg));
+      if (result == ESP_OK)
+      {
+        Serial.println("Slave config message sent with success");
+      }
+    }
+  }
 }
 
 void loop()
 {
   // Serial.println(WiFi.status());
-  if (!wifi_failed)
+  if (!wifi_failed || deviceMode == SLAVE_MODE)
   {
     unsigned long currentMillisMQTT = millis();
     bool mqttPublished = false;
 
     unsigned long currentMillis = millis();
     // if WiFi is down, try reconnecting every CHECK_WIFI_TIME seconds
-    if ((WiFi.status() != WL_CONNECTED) && (currentMillis - previousMillis >= interval))
+    if ((WiFi.status() != WL_CONNECTED) && (currentMillis - previousMillis >= interval) && !wifi_failed)
     {
       Serial.print(millis());
       Serial.println("Reconnecting to WiFi...");
@@ -471,8 +623,21 @@ void loop()
         {
           if (currentMillisMQTT - previousMillisMQTT >= mqttInterval)
           {
-            mqttClient.publish((topic_in + "/i2c").c_str(), 1, true, (char *)i2c_buffer, sizeof(i2c_buffer));
-            mqttPublished = true;
+            if (!wifi_failed)
+            {
+              mqttClient.publish((topic_in + "/i2c").c_str(), 1, true, (char *)i2c_buffer, sizeof(i2c_buffer));
+              mqttPublished = true;
+              if (deviceMode == SLAVE_MODE)
+              {
+                net_message msg;
+                msg.slave_id = preferences.getInt("slave_id");
+                msg.msg_type = MASTER_IN;
+                msg.data.pinType = I2C;
+                msg.data.key = 100;
+                memcpy(&msg.data.i2c_buffer, i2c_buffer, sizeof(i2c_buffer));
+                esp_err_t result = esp_now_send(peerMaster.peer_addr, (uint8_t *)&msg, sizeof(msg));
+              }
+            }
           }
         }
       }
@@ -482,13 +647,24 @@ void loop()
     {
       if (pin_modes[i] == "di") // Digital Reading
       {
-        String val = String(digitalRead(i));
+        int val = digitalRead(i);
         if (currentMillisMQTT - previousMillisMQTT >= mqttInterval)
         {
-          mqttClient.publish((topic_in + "/di" + String(i)).c_str(), 1, true, val.c_str());
+          mqttClient.publish((topic_in + "/di" + String(i)).c_str(), 1, true, String(val).c_str());
           mqttPublished = true;
+          if (deviceMode == SLAVE_MODE)
+          {
+            net_message msg;
+            msg.slave_id = preferences.getInt("slave_id");
+            msg.msg_type = MASTER_IN;
+            msg.data.pinType = DI;
+            msg.data.key = i;
+            msg.data.value = val;
+            esp_err_t result = esp_now_send(peerMaster.peer_addr, (uint8_t *)&msg, sizeof(msg));
+          }
         }
-        notifyGPIOStatus(i, val);
+
+        notifyGPIOStatus(i, String(val));
       }
       else if (pin_modes[i] == "ai") // Analog Reading
       {
@@ -497,7 +673,18 @@ void loop()
         {
           mqttClient.publish((topic_in + "/ai" + String(i)).c_str(), 1, true, String(analog_reading).c_str());
           mqttPublished = true;
+          if (deviceMode == SLAVE_MODE)
+          {
+            net_message msg;
+            msg.slave_id = preferences.getInt("slave_id");
+            msg.msg_type = MASTER_IN;
+            msg.data.pinType = AI;
+            msg.data.key = i;
+            msg.data.value = analog_reading;
+            esp_err_t result = esp_now_send(peerMaster.peer_addr, (uint8_t *)&msg, sizeof(msg));
+          }
         }
+
         notifyGPIOStatus(i, String(analog_reading));
       }
     }
@@ -507,7 +694,7 @@ void loop()
       previousMillisMQTT = currentMillisMQTT;
     }
 
-    delay(500);
+    delay(5000);
   }
 }
 
@@ -565,6 +752,9 @@ void setRoutes()
   server.on("/pins", HTTP_GET, [](AsyncWebServerRequest *request)
             { request->send(SPIFFS, "/pins.html", "text/html"); });
 
+  server.on("/net", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(SPIFFS, "/net.html", "text/html"); });
+
   server.on("/getWiFiData", HTTP_GET, [](AsyncWebServerRequest *request)
             {
     String existing_ssid = preferences.getString("ssid");
@@ -595,6 +785,21 @@ void setRoutes()
                 }
               }
               response += "}}";
+
+              request->send(200, "application/json", response); });
+
+  server.on("/loadSlavePinsData", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+              String slavePinConfig = preferences.getString("slave_pins");
+              String macList = preferences.getString("mac_list");
+              String deviceMode = String(preferences.getInt("device_mode"));
+              
+              String response = "{ \"pins\": ";
+              response += slavePinConfig;
+              response += ", ";
+              response += "\"mac_list\": \""+macList+"\", ";
+              response += "\"device_mode\": \""+deviceMode+"\"";
+              response += "}";
 
               request->send(200, "application/json", response); });
 
@@ -679,9 +884,213 @@ void setRoutes()
       preferences.putString(p->name().c_str(), p->value().c_str());
     }
     request->redirect("/pins"); });
+
+  server.on("/net", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+    int device_mode = request->getParam("device_mode", true)->value().toInt();
+    if (device_mode== SLAVE_MODE)
+    {
+      preferences.putInt("device_mode", SLAVE_MODE);
+      request->redirect("/net");
+    }
+
+    if (device_mode == MASTER_MODE)
+    {
+      preferences.putInt("device_mode", MASTER_MODE);
+
+      preferences.putString("mac_list", request->getParam("mac_list", true)->value());
+
+      // Saving Slave Pin Configuaration
+      int params = request->params();
+      String slavePinConfig = "{";
+      for (int i = 0; i < params; i++){
+        AsyncWebParameter* p = request->getParam(i);
+        String key = p->name();
+        String value = p->value();
+        if (key !="device_mode" && key != "mac_list")
+        {
+          int s_pin_mode = NA;
+          if (value=="ai")
+          {
+            s_pin_mode = AI;
+          } else if(value=="ao"){
+            s_pin_mode = AO;
+          }else if(value=="di"){
+            s_pin_mode = DI;
+          }else if(value=="do"){
+            s_pin_mode = DO;
+          }
+          preferences.putInt(("s"+p->name()).c_str(), s_pin_mode);
+
+          slavePinConfig += "\"" + key + "\": ";
+          slavePinConfig += "\""+p->value()+"\"";
+          if (i != (params-1))
+          {
+            slavePinConfig += ", ";
+          }
+          else
+          {
+            slavePinConfig += " ";
+          }
+
+        }
+        
+      }
+      slavePinConfig += "}";
+      preferences.putString("slave_pins", slavePinConfig);
+    }
+    
+    request->redirect("/net"); });
 }
 
 void notifyGPIOStatus(int pin_id, String value)
 {
   ws.textAll("{ \"p" + String(pin_id) + "\": \"" + value + "\" }");
+}
+
+// callback function that will be executed when data is received
+void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
+{
+  memcpy(&dataReceived, incomingData, sizeof(dataReceived));
+  Serial.print("Bytes received: ");
+  Serial.println(len);
+  Serial.print("Type: ");
+  Serial.println(dataReceived.msg_type);
+  // Serial.print("Master Mac: ");
+  // Serial.println(dataReceived.master_mac);
+  switch (dataReceived.msg_type)
+  {
+  case SLAVE_CONFIG:
+    configSlave(dataReceived);
+    break;
+
+  case MASTER_IN:
+    handleMasterIn(dataReceived);
+    break;
+
+  default:
+    break;
+  }
+}
+
+void configSlave(net_message slaveConfigMsg)
+{
+  preferences.putInt("device_mode", SLAVE_MODE);
+  preferences.putInt("slave_id", slaveConfigMsg.slave_id);
+  preferences.putString("master_mac", slaveConfigMsg.master_mac);
+  size_t count = sizeof(slaveConfigMsg.slave_pins) / sizeof(int);
+  for (size_t i = 0; i < count; i++)
+  {
+    // Serial.print(slaveConfigMsg.slave_pins[i]);
+    // Serial.print(":");
+    // Serial.println(slaveConfigMsg.slave_pin_config[i]);
+    if (slaveConfigMsg.slave_pin_config[i] == AI)
+    {
+      preferences.putString(("p" + String(slaveConfigMsg.slave_pins[i])).c_str(), "ai");
+    }
+    else if (slaveConfigMsg.slave_pin_config[i] == AO)
+    {
+      preferences.putString(("p" + String(slaveConfigMsg.slave_pins[i])).c_str(), "ao");
+    }
+    else if (slaveConfigMsg.slave_pin_config[i] == DI)
+    {
+      preferences.putString(("p" + String(slaveConfigMsg.slave_pins[i])).c_str(), "di");
+    }
+    else if (slaveConfigMsg.slave_pin_config[i] == DO)
+    {
+      preferences.putString(("p" + String(slaveConfigMsg.slave_pins[i])).c_str(), "do");
+    }
+    else
+    {
+      preferences.putString(("p" + String(slaveConfigMsg.slave_pins[i])).c_str(), "");
+    }
+  }
+
+  delay(2000);
+  ESP.restart();
+}
+
+void handleMasterIn(net_message masterInMsg)
+{
+  String mqttTopic = topic_in + "/"+masterInMsg.slave_id+"_";
+  switch (masterInMsg.data.pinType)
+  {
+  case AI:
+    mqttTopic += "ai";
+    break;
+
+  case DI:
+    mqttTopic += "di";
+    break;
+  
+  case I2C:
+    mqttTopic += "i2c";
+    break;
+  
+  default:
+    break;
+  }
+  mqttTopic += String(masterInMsg.data.key);
+  Serial.print("Topicc: ");
+  Serial.print(String(masterInMsg.data.value)+" ");
+  Serial.println(mqttTopic);
+  mqttClient.publish((mqttTopic).c_str(), 1, true, String(masterInMsg.data.value).c_str());
+}
+
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+{
+  if (status != ESP_NOW_SEND_SUCCESS)
+  {
+    Serial.print("\r\nLast Packet Send Status:\t");
+    Serial.print("Delivery Failed to ");
+    for (size_t i = 0; i < (sizeof(mac_addr) / sizeof(uint8_t)); i++)
+    {
+      Serial.print(mac_addr[i]);
+    }
+    Serial.println();
+  }
+}
+
+void setSlavePins()
+{
+  int count = sizeof(slave_pins) / sizeof(int);
+  for (size_t i = 0; i < count; i++)
+  {
+    slave_pin_mode[i] = preferences.getInt(("sp" + String(slave_pins[i])).c_str());
+  }
+}
+
+void setPeers(String mac_pref_string)
+{
+  String slave_mac_list[10];
+  mac_pref_string.replace(" ", ""); // remove spaces
+  char *slave_mac = strtok((char *)mac_pref_string.c_str(), ",");
+  int i = 0;
+  while (slave_mac != NULL)
+  {
+    slave_mac_list[i] = slave_mac;
+    i++;
+    slave_mac = strtok(NULL, ",");
+  }
+  peersCount = i;
+  for (size_t j = 0; j < peersCount; j++)
+  {
+    uint8_t temp_mac[6];
+    if (slave_mac_list[j])
+    {
+      char *macBit = strtok((char *)slave_mac_list[j].c_str(), ":");
+      int k = 0;
+      while (macBit != NULL)
+      {
+        int intBit = (int)strtol(macBit, 0, 16);
+        temp_mac[k] = intBit;
+        k++;
+        macBit = strtok(NULL, ":");
+      }
+
+      memcpy(peers[j].peer_addr, temp_mac, 6);
+      peers[j].channel = 0;
+      peers[j].encrypt = false;
+    }
+  }
 }
