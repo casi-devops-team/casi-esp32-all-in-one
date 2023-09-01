@@ -347,6 +347,7 @@ void setup()
 
   mqttClient.setServer(mqtt_broker.c_str(), mqtt_port);
   mqttClient.setCredentials(mqtt_username.c_str(), mqtt_password.c_str());
+  // mqttClient.setSecure(true);
 
   initWiFi();
   Serial.print("RSSI: ");

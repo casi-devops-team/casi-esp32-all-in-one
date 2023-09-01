@@ -105,8 +105,10 @@ textarea.form__input {
     margin: 10px 0;
 
     color: #ffffff;
-    background: #14b64a;
-    border: 2px solid #0fa942;
+    background: linear-gradient(45deg,#13d9ff,#fa5cd6);
+    border: 2px solid linear-gradient(45deg,#13d9ff,#fa5cd6);
+    border-image: linear-gradient(45deg,#13d9ff,#fa5cd6) 1;
+    min-width: 130px;
     border-radius: 5px;
 
     cursor: pointer;

@@ -22,7 +22,8 @@ body {
 }
 
 .sidebar a.active {
-    background-color: #04AA6D;
+    background: linear-gradient(45deg,#13d9ff,#fa5cd6);
+    /* background-color: #04AA6D; */
     color: white;
 }
 
