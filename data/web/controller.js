@@ -10,17 +10,30 @@ fetch("/sidebar.html").then(x => x.text()).then((response) => {
     });
 });
 
+function logoutButton() {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", "/logout", true);
+    xhr.send();
+    setTimeout(function () { window.open("/logged-out", "_self"); }, 1000);
+}
+
+const firmwareFile = document.getElementById("firmwareFile");
+firmwareFile.addEventListener('change', (event) => {
+    const fileName = document.getElementById("fileName");
+    fileName.innerHTML = event.target.files[0].name;
+});
+
 function isValidMACAddress(str) {
     // Regex to check valid
     // MAC_Address 
     let regex = new RegExp(/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})|([0-9a-fA-F]{4}.[0-9a-fA-F]{4}.[0-9a-fA-F]{4})$/);
- 
+
     // if str
     // is empty return false
     if (str == null) {
         return false;
     }
- 
+
     // Return true if the str
     // matched the ReGex
     if (regex.test(str) == true) {
@@ -30,6 +43,7 @@ function isValidMACAddress(str) {
         return false;
     }
 }
+
 
 function validateMacList() {
     let valid = true;

@@ -8,6 +8,7 @@
 #include "SPIFFS.h"
 #include <map>
 #include <esp_now.h>
+#include <Update.h>
 
 #include <I2C_Search.h>
 
@@ -55,6 +56,8 @@ typedef struct net_message
 #define NA 10
 
 // variable declarations
+TaskHandle_t Task1;
+AsyncWebServerRequest *fmrequest;
 Preferences preferences;
 
 byte i2c_address;
@@ -108,9 +111,15 @@ esp_now_peer_info_t peerMaster;
 uint8_t peersCount = 0;
 net_message dataReceived;
 
-//=============================================================
 const char *PARAM_INPUT_1 = "output";
 const char *PARAM_INPUT_2 = "state";
+
+bool firmwareUploadEnd = false;
+int firmwareUploadResponseCode = 500;
+String firmwareUploadResponse = "";
+
+String http_username = "admin";
+String http_password = "admin";
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -162,6 +171,12 @@ String processor(const String &var)
     return mac;
   }
 
+  if (var == "VERSION")
+  {
+    String mac = "<p style=\"margin: auto; font-size: small; color: darkgray; font-family: monospace;\">Firmware Version 1.0.0</p>";
+    return mac;
+  }
+
   //  if(var == "BUTTONPLACEHOLDER"){
   //    String buttons = "";
   //    buttons += "<h4>Output - GPIO 26</h4><label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleCheckbox(this)\" id=\"26\" " + outputState(26) + "><span class=\"slider\"></span></label>";
@@ -171,8 +186,6 @@ String processor(const String &var)
   //  }
   return String();
 }
-
-//=============================================================
 
 // put function declarations here:
 void initWiFi();
@@ -185,6 +198,9 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
 void setSlavePins();
 void configSlave(net_message slaveConfigMsg);
 void handleMasterIn(net_message masterInMsg);
+void factoryReset();
+void updateFirmware();
+void Task1code( void * pvParameters );
 
 //--------------------------------------------------------
 void connectToMqtt()
@@ -359,7 +375,7 @@ void setup()
     // Connect to Wi-Fi network with SSID and password
     Serial.println("Setting AP (Access Point)");
     // NULL sets an open Access Point
-    WiFi.softAP("ESP32", "12345678");
+    WiFi.softAP("CASI Mini NET", "12345678");
 
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
@@ -464,7 +480,7 @@ void setup()
     topic_in = String(topic_in_prefix) + serial_number;
     topic_out = String(topic_out_prefix) + serial_number;
 
-    String client_id = "2esp32-client-";
+    String client_id = "esp32-client-";
     client_id += serial_number;
     Serial.printf("The client %s connects to the CASI MQTT broker\n", client_id.c_str());
     mqttClient.setClientId(client_id.c_str());
@@ -736,12 +752,21 @@ void initWiFi()
 
 void setRoutes()
 {
-  server.serveStatic("/", SPIFFS, "/");
+  server.serveStatic("/", SPIFFS, "/web/");
   // Route for root / web page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-            { 
+            {
+              if(!request->authenticate(http_username.c_str(), http_password.c_str())) return request->requestAuthentication(); 
     // request->send_P(200, "text/html", index_html, processor);
     request->send(SPIFFS, "/index.html", "text/html", false, processor); });
+  
+  server.on("/logout", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(401);
+  });
+
+  server.on("/logged-out", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", "/logout.html", processor);
+  });
 
   server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
             { request->send(SPIFFS, "/mqtt.html", "text/html"); });
@@ -938,6 +963,97 @@ void setRoutes()
     }
     
     request->redirect("/net"); });
+
+  server.on("/factory-reset", HTTP_GET, [](AsyncWebServerRequest *request){
+    try {
+      // throw std::exception();
+      factoryReset();
+      String localiP = WiFi.softAPIP().toString();
+      request->send(200, "application/json", "Factory reset successful. Device will restart now. Goto <a href='http://" + localiP + "'>" + localiP + "</a>.");
+      delay(3000);
+      ESP.restart();
+    }
+    catch (const std::exception &e) {
+      request->send(501, "application/json", "Factory reset failed.");
+    }
+  });
+
+  server.on("/upload-firmware", HTTP_POST, [] (AsyncWebServerRequest *request) {
+    // if (request->hasParam("firmwareFile", true)) {
+    //   AsyncWebParameter *fwFile = request->getParam("firmwareFile", true);
+
+    //   // Check if the file was successfully uploaded
+    //   // if (fwFile->isFile()) {
+    //   //   // // File firmwre = fwFile->get
+    //   //   // File firmware = fwFile->getUpload();
+    //   //   // // Save the uploaded firmware to a file
+    //   //   // if (firmware) {
+    //   //   //   // Specify the path where you want to save the firmware
+    //   //   //   String firmwarePath = "/path/to/save/firmware.bin";
+    //   //   //   // Open a file in binary write mode
+    //   //   //   File firmwareFile = SPIFFS.open(firmwarePath, "w");
+    //   //   //   if (firmwareFile) {
+    //   //   //     while (firmware.available()) {
+    //   //   //       firmwareFile.write(firmware.read());
+    //   //   //     }
+    //   //   //     firmwareFile.close();
+    //   //   //     request->send(200, "text/plain", "Firmware uploaded successfully.");
+    //   //   //   } else {
+    //   //   //     request->send(500, "text/plain", "Error saving firmware.");
+    //   //   //   }
+    //   //   // } else {
+    //   //   //   request->send(500, "text/plain", "Error accessing uploaded firmware.");
+    //   //   // }
+    //   // } else {
+    //   //   request->send(400, "text/plain", "No firmware file uploaded.");
+    //   // }
+    // } else {
+    //   request->send(400, "text/plain", "Missing firmware file parameter.");
+    // }
+  }, [] (AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+    String logmessage;
+    
+    if (!index) {
+      logmessage = "Upload Start: " + String(filename);
+      // open the file on first call and store the file handle in the request object
+      request->_tempFile = SPIFFS.open("/path/to/save/firmware.bin", "w");
+      Serial.println(logmessage);
+    }
+
+    if (len) {
+      // stream the incoming chunk to the opened file
+      request->_tempFile.write(data, len);
+      logmessage = "Writing file: " + String(filename) + " index=" + String(index) + " len=" + String(len);
+      Serial.println(logmessage);
+    }
+
+    if (final) {
+      logmessage = "Upload Complete: " + String(filename) + ",size: " + String(index + len);
+      // close the file handle as the upload is now done
+      request->_tempFile.close();
+      Serial.println(logmessage);
+      fmrequest = request;
+      xTaskCreatePinnedToCore(Task1code, "updateFirmware", 10000, NULL, 1, &Task1, 1);
+      request->send(200, "text/plain", "Firmware update in progress... \nDo not restart or switch off the device.\nRetry connecting to Casi Mini NET WiFi netwok in 2 minutes and then http://"+ WiFi.softAPIP().toString() +".");
+      // while (!firmwareUploadEnd)
+      // {
+      //   delay(500);
+      // }
+      // if(firmwareUploadEnd) {
+      //   request->send(firmwareUploadResponseCode, "text/plain", firmwareUploadResponse);
+      //   firmwareUploadEnd = false;
+      //   if (firmwareUploadResponseCode==200) {
+      //     delay(3000);
+      //     Serial.println("Rebooting...");
+      //     ESP.restart();
+      //   }
+      // }
+      
+      // request->redirect("/");
+      // request->send(200, "text/plain", "Firmware uploaded successfully.");
+    }
+  });
+
 }
 
 void notifyGPIOStatus(int pin_id, String value)
@@ -1009,7 +1125,7 @@ void configSlave(net_message slaveConfigMsg)
 
 void handleMasterIn(net_message masterInMsg)
 {
-  String mqttTopic = topic_in + "/"+masterInMsg.slave_id+"_";
+  String mqttTopic = topic_in + "/" + masterInMsg.slave_id + "_";
   switch (masterInMsg.data.pinType)
   {
   case AI:
@@ -1019,17 +1135,17 @@ void handleMasterIn(net_message masterInMsg)
   case DI:
     mqttTopic += "di";
     break;
-  
+
   case I2C:
     mqttTopic += "i2c";
     break;
-  
+
   default:
     break;
   }
   mqttTopic += String(masterInMsg.data.key);
   Serial.print("Topicc: ");
-  Serial.print(String(masterInMsg.data.value)+" ");
+  Serial.print(String(masterInMsg.data.value) + " ");
   Serial.println(mqttTopic);
   mqttClient.publish((mqttTopic).c_str(), 1, true, String(masterInMsg.data.value).c_str());
 }
@@ -1055,6 +1171,11 @@ void setSlavePins()
   {
     slave_pin_mode[i] = preferences.getInt(("sp" + String(slave_pins[i])).c_str());
   }
+}
+
+void factoryReset()
+{
+  preferences.clear();
 }
 
 void setPeers(String mac_pref_string)
@@ -1091,3 +1212,67 @@ void setPeers(String mac_pref_string)
     }
   }
 }
+
+void Task1code( void * pvParameters ){
+  Serial.print("Task1 running on core ");
+  Serial.println(xPortGetCoreID());
+
+  updateFirmware();
+  vTaskDelete( Task1 );
+}
+
+void updateFirmware() {
+  // Open the firmware binary file in SPIFFS
+  File firmwareFile = SPIFFS.open("/path/to/save/firmware.bin", "r");
+
+  if (!firmwareFile) {
+      Serial.println("Failed to open firmware.bin");
+      firmwareUploadResponseCode = 501;
+      firmwareUploadResponse = "Firmware update failed! Failed to open firmware.bin.";
+      firmwareUploadEnd = true;
+      return;
+  }
+  
+  // Start the firmware update process
+  if (Update.begin(firmwareFile.size())) {
+    Serial.println("Updating firmware...");
+    size_t written = Update.writeStream(firmwareFile);
+
+    if (written == firmwareFile.size()) {
+      Serial.println("Firmware update successful!");
+    } else {
+      Serial.println("Firmware update failed!");
+      firmwareUploadResponseCode = 501;
+      firmwareUploadResponse = "Firmware update failed!";
+      firmwareUploadEnd = true;
+      //request->send(501, "text/plain", "Firmware update failed!");
+    }
+
+    // End the update
+    if (Update.end()) {
+      firmwareUploadResponseCode = 200;
+      firmwareUploadResponse = "Firmware uploaded successfully. Restarting the Device...";
+      firmwareUploadEnd = true;
+      //request->send(200, "text/plain", "Firmware uploaded successfully. Restarting the Device...");
+      delay(3000);
+      Serial.println("Rebooting...");
+      ESP.restart();
+    } else {
+      Serial.println("Error Occurred. Error #: " + String(Update.getError()));
+      Serial.println("Failed to end the update");
+      firmwareUploadResponseCode = 501;
+      firmwareUploadResponse = "Firmware upload failed. Failed to end the update.";
+      firmwareUploadEnd = true;
+      // request->send(501, "text/plain", "Firmware upload failed. Failed to end the update.");
+    }
+  } else {
+    Serial.println("Failed to begin the update");
+    firmwareUploadResponseCode = 501;
+    firmwareUploadResponse = "Firmware upload failed. Failed to begin the update.";
+    firmwareUploadEnd = true;
+    //request->send(501, "text/plain", "Firmware upload failed. Failed to begin the update.");
+  }
+  
+  firmwareFile.close();
+}
+

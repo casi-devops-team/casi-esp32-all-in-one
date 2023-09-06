@@ -14,6 +14,10 @@
 
 
     <div class="content">
+        <div class="alert alert-success alert-dismissible fade show flex" role="alert">
+            <span id="alert-message">Response</span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
         <form class="form" action="/wifi" method="POST">
             <div class="form__title">WiFi Setup</div>
             <p class="form__desc">
@@ -41,10 +45,40 @@
                 <button class="form__btn" style="align-self: start;" type="submit">Save</button>
             </div>
         </form>
+        <hr>
+        <h3 style="margin-bottom: 0px; text-align: start; padding-left: 20px;">Factory Reset</h3>
+        <div style="display: flex; padding: 0px 20px 20px 20px;">
+            <button id="factoryResetButton" class="form__btn" style="align-self: start;" type="submit">Factory
+                Reset</button>
+        </div>
+        <h3 style="margin-bottom: 0px; text-align: start; padding-left: 20px;">Firmware Update</h3>
+        <form id="firmwareUploadForm" action="/upload-firmware" method="post" enctype="multipart/form-data" style="display: flex; padding: 0px 20px 20px 20px; align-items: flex-start; justify-content: flex-start;">
+            <div class="col">
+                <div class="upload-button-wrap">
+                    <label class="upload-button" for="firmwareFile">Select File</label>
+                    <input id="firmwareFile" type="file" name="firmwareFile" required />
+                </div>
+                <div id="fileName" class="filename">No file chosen</div>
+            </div>
+            <button id="firmwareUploadButton" class="form__btn" style="align-self: start;" type="submit">Upload Firmware</button>
+
+        </form>
+    </div>
+    %VERSION%
+    <div id="reset-confirmation-container">
+        <div id="reset-confirmation-model" class="modal">
+            <div class="modal-content">
+                <h1>Factory Reset</h1>
+                <p>Are you sure you want to proceed? This cannot be undone.</p>
+                <button class="form__btn" id="reset-confirmation">Yes</button>
+                <button class="form__btn" id="confirmNo">No</button>
+            </div>
+        </div>
     </div>
 
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <script src="/controller.js"></script>
+    <script src="/index.js"></script>
     <script>
         function loadWiFiData() {
             let ssid = document.getElementById("ssid");
