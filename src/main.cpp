@@ -1242,7 +1242,7 @@ void configSlave(net_message slaveConfigMsg)
 
 void handleMasterIn(net_message masterInMsg)
 {
-  String mqttTopic = topic_in + "/" + masterInMsg.slave_id + ".";
+  String mqttTopic = topic_in + "/" + masterInMsg.slave_id + "_";
   switch (masterInMsg.data.pinType)
   {
   case AI:
