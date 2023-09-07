@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" type="text/css" href="sidebar.css">
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+
+<body onload="loadSlaveInfo()">
+
+    <div class="sidebar" id="sidebar">
+    </div>
+
+
+    <div class="content">
+        <div class="alert alert-success alert-dismissible fade show flex" role="alert">
+            <span id="alert-message">Response</span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        <div class="form__title">Slave Devices</div>
+        <table style="background: darkgray; max-width: 500px;">
+            <thead>
+                <tr>
+                    <th>Online</th>
+                    <th>Slave ID</th>
+                    <th>MAC Address</th>
+                </tr>
+            </thead>
+            <tbody id="slavesTable">
+                <tr>
+                    <td colspan="3">
+                        <progress style="width: -webkit-fill-available;" />
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+
+    </div>
+    %VERSION%
+
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="/controller.js"></script>
+    <script src="/index.js"></script>
+    <script>
+        var gateway = `ws://${window.location.hostname}/slave-status`;
+        var websocket;
+        //window.addEventListener('load', onLoad);
+
+        function initWebSocket() {
+            console.log('Trying to open a WebSocket connection...');
+            websocket = new WebSocket(gateway);
+            websocket.onopen = onOpen;
+            websocket.onclose = onClose;
+            websocket.onmessage = onMessage; // <-- add this line
+        }
+        function onOpen(event) {
+            console.log('Connection opened');
+        }
+        function onClose(event) {
+            console.log('Connection closed');
+            setTimeout(initWebSocket, 2000);
+        }
+        function onMessage(event) {
+            let data = JSON.parse(event.data);
+            console.log("data: ", data)
+            const element = document.getElementById(("slave_"+data.mac));
+            if (data.status == "online") {
+                element.style.fill = "lightgreen";
+            } else if (data.status == "offline") {
+                element.style.fill = "lightgray";
+            } else {
+                element.style.fill = "black";
+            }
+        }
+        function loadSlaveInfo() {
+            let slavesTable = document.getElementById("slavesTable");
+            axios.get("/getSlaveInfo").then((response) => {
+                if (response.data) {
+                    let html_string = "";
+                    for (const key in response.data) {
+                        if (Object.hasOwnProperty.call(response.data, key)) {
+                            const value = response.data[key];
+                            let row_html = "<tr><td><svg style=\"fill: lightgrey;\" id=\"slave_" + value + "\" xmlns=\"http://www.w3.org/2000/svg\" height=\"16px\" viewBox=\"0 0 24 24\" width=\"24px\"><path d=\"M0 0h24v24H0z\" fill=\"none\" /><path d=\"M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2z\" /></svg></td><td>" + key + "</td><td>" + value + "</td></tr>";
+                            html_string += row_html;
+                        }
+                    }
+                    slavesTable.innerHTML = html_string;
+
+
+                }
+
+                initWebSocket();
+            });
+        }
+    </script>
+</body>
+
+</html>

@@ -12,6 +12,10 @@ h1 {
     margin: auto;
 }
 
+tr {
+    background: #fff;
+}
+
 .flex {
     display: flex;
 }

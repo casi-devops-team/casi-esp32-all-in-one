@@ -57,6 +57,7 @@ typedef struct net_message
 
 // variable declarations
 TaskHandle_t Task1;
+TaskHandle_t TaskLoop;
 AsyncWebServerRequest *fmrequest;
 Preferences preferences;
 
@@ -111,6 +112,8 @@ esp_now_peer_info_t peerMaster;
 uint8_t peersCount = 0;
 net_message dataReceived;
 
+std::map<String, unsigned long> slaveUpdates;
+
 const char *PARAM_INPUT_1 = "output";
 const char *PARAM_INPUT_2 = "state";
 
@@ -121,6 +124,7 @@ String firmwareUploadResponse = "";
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
+AsyncWebSocket wsSlave("/slave-status");
 
 // Initialize SPIFFS
 void initSPIFFS()
@@ -197,7 +201,8 @@ void configSlave(net_message slaveConfigMsg);
 void handleMasterIn(net_message masterInMsg);
 void factoryReset();
 void updateFirmware();
-void Task1code( void * pvParameters );
+void Task1code(void *pvParameters);
+void TaskLoopCode(void *pvParameters);
 bool verifyAuth(AsyncWebServerRequest *request);
 
 //--------------------------------------------------------
@@ -332,11 +337,11 @@ void setup()
 {
   preferences.begin("MQTT", false);
   preferences.putString("http_username", "admin");
-  if (!preferences.getString("http_password"))
+  if (!preferences.getString("http_password") || preferences.getString("http_password") == String())
   {
     preferences.putString("http_password", "pass");
   }
-  
+
   // preferences.putString("ssid", "Dialog 4G 707");
   // preferences.putString("password", "1JhLgena");
   // preferences.putString("ssid", "Dialog 4G");
@@ -474,6 +479,7 @@ void setup()
   else
   {
     server.addHandler(&ws);
+    server.addHandler(&wsSlave);
     setRoutes();
 
     // Start server
@@ -595,6 +601,8 @@ void setup()
       }
     }
   }
+
+  xTaskCreatePinnedToCore(TaskLoopCode, "TaskLoopCode", 10000, NULL, 1, &TaskLoop, 1);
 }
 
 void loop()
@@ -606,6 +614,7 @@ void loop()
     bool mqttPublished = false;
 
     unsigned long currentMillis = millis();
+
     // if WiFi is down, try reconnecting every CHECK_WIFI_TIME seconds
     if ((WiFi.status() != WL_CONNECTED) && (currentMillis - previousMillis >= interval) && !wifi_failed)
     {
@@ -767,14 +776,15 @@ void setRoutes()
     if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication(); 
     //request->send_P(200, "text/html", index_html, processor);
     request->send(SPIFFS, "/web/index.html", "text/html", false, processor); });
-  
-  server.on("/logout", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(401);
-  });
 
-  server.on("/logged-out", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SPIFFS, "/web/logout.html", "text/html", false, processor);
-  });
+  server.on("/slaves", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(SPIFFS, "/web/slave-devices.html", "text/html"); });
+
+  server.on("/logout", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(401); });
+
+  server.on("/logged-out", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(SPIFFS, "/web/logout.html", "text/html", false, processor); });
 
   server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
             { 
@@ -790,7 +800,7 @@ void setRoutes()
             { 
               if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
               request->send(SPIFFS, "/web/net.html", "text/html"); });
-  
+
   server.on("/change-pass", HTTP_GET, [](AsyncWebServerRequest *request)
             { 
               if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
@@ -847,6 +857,26 @@ void setRoutes()
               response += "}";
 
               request->send(200, "application/json", response); });
+
+  server.on("/getSlaveInfo", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    String response = "{";
+    size_t peers_count = sizeof(peers)/sizeof(esp_now_peer_info_t);
+    for (size_t i = 0; i < peers_count; i++)
+    {
+      if (peers[i].peer_addr[0] == 0)
+      {
+        break;
+      }
+      String MACAddr = "\""+String(peers[i].peer_addr[0], 16)+":"+String(peers[i].peer_addr[1], 16)+":"+String(peers[i].peer_addr[2], 16)+":"+String(peers[i].peer_addr[3], 16)+":"+String(peers[i].peer_addr[4], 16)+":"+String(peers[i].peer_addr[5], 16)+"\"";
+      if (i != 0 ){  
+        response += ", ";
+      }
+      response += " \""+String(i)+"\": "+ MACAddr;
+    }
+    response += " }";
+
+    request->send(200, "application/json", response); });
 
   server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
             {
@@ -933,9 +963,9 @@ void setRoutes()
     }
     request->redirect("/pins"); });
 
-  server.on("/net", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
+  server.on("/net", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
+    
     int device_mode = request->getParam("device_mode", true)->value().toInt();
     if (device_mode== SLAVE_MODE)
     {
@@ -991,46 +1021,53 @@ void setRoutes()
     
     request->redirect("/net"); });
 
-  server.on("/change-pass", HTTP_POST, [] (AsyncWebServerRequest *request){
-    if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
-    String old_password;
-    String new_password;
-    String confirm_password;
+  server.on("/change-pass", HTTP_POST, [](AsyncWebServerRequest *request)
+            {
+              if (!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str()))
+                return request->requestAuthentication();
+              String old_password;
+              String new_password;
+              String confirm_password;
 
-    int params = request->params();
-    for (int i = 0; i < params; i++){
-      AsyncWebParameter* p = request->getParam(i);
-      if (p->name()=="oldPassword")
-      {
-        old_password = p->value();
-      }
-      else if (p->name()=="password")
-      {
-        new_password = p->value();
-      }
-      else if (p->name()=="confirmPassword")
-      {
-        confirm_password = p->value();
-      }
-      
-      //Serial.printf("POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
-    }
+              int params = request->params();
+              for (int i = 0; i < params; i++)
+              {
+                AsyncWebParameter *p = request->getParam(i);
+                if (p->name() == "oldPassword")
+                {
+                  old_password = p->value();
+                }
+                else if (p->name() == "password")
+                {
+                  new_password = p->value();
+                }
+                else if (p->name() == "confirmPassword")
+                {
+                  confirm_password = p->value();
+                }
 
-    if (new_password == confirm_password)
-    {
-      if(old_password == preferences.getString("http_password")){
-        preferences.putString("http_password", new_password);
-        request->send(200, "text/html", "<p>Password Updated Successfully. <a href=\"/\">return to homepage</a>.</p>");
-      } else {
-        request->send(501, "text/html", "<p>Passwords Don't Match. <a href=\"/\">return to homepage</a>.</p>");
-      }
-    } else {
-      request->send(501, "text/html", "<p>Confirm Password Don't Match. <a href=\"/\">return to homepage</a>.</p>");
-    }
-    
-  });
+                // Serial.printf("POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
+              }
 
-  server.on("/factory-reset", HTTP_GET, [](AsyncWebServerRequest *request){
+              if (new_password == confirm_password)
+              {
+                if (old_password == preferences.getString("http_password"))
+                {
+                  preferences.putString("http_password", new_password);
+                  request->send(200, "text/html", "<p>Password Updated Successfully. <a href=\"/\">return to homepage</a>.</p>");
+                }
+                else
+                {
+                  request->send(501, "text/html", "<p>Passwords Don't Match. <a href=\"/\">return to homepage</a>.</p>");
+                }
+              }
+              else
+              {
+                request->send(501, "text/html", "<p>Confirm Password Don't Match. <a href=\"/\">return to homepage</a>.</p>");
+              } });
+
+  server.on("/factory-reset", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
     if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
     try {
       // throw std::exception();
@@ -1042,86 +1079,92 @@ void setRoutes()
     }
     catch (const std::exception &e) {
       request->send(501, "application/json", "Factory reset failed.");
-    }
-  });
+    } });
 
-  server.on("/upload-firmware", HTTP_POST, [] (AsyncWebServerRequest *request) {
-    if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
-    // if (request->hasParam("firmwareFile", true)) {
-    //   AsyncWebParameter *fwFile = request->getParam("firmwareFile", true);
+  server.on(
+      "/upload-firmware", HTTP_POST, [](AsyncWebServerRequest *request)
+      {
+        if (!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str()))
+          return request->requestAuthentication();
+        // if (request->hasParam("firmwareFile", true)) {
+        //   AsyncWebParameter *fwFile = request->getParam("firmwareFile", true);
 
-    //   // Check if the file was successfully uploaded
-    //   // if (fwFile->isFile()) {
-    //   //   // // File firmwre = fwFile->get
-    //   //   // File firmware = fwFile->getUpload();
-    //   //   // // Save the uploaded firmware to a file
-    //   //   // if (firmware) {
-    //   //   //   // Specify the path where you want to save the firmware
-    //   //   //   String firmwarePath = "/path/to/save/firmware.bin";
-    //   //   //   // Open a file in binary write mode
-    //   //   //   File firmwareFile = SPIFFS.open(firmwarePath, "w");
-    //   //   //   if (firmwareFile) {
-    //   //   //     while (firmware.available()) {
-    //   //   //       firmwareFile.write(firmware.read());
-    //   //   //     }
-    //   //   //     firmwareFile.close();
-    //   //   //     request->send(200, "text/plain", "Firmware uploaded successfully.");
-    //   //   //   } else {
-    //   //   //     request->send(500, "text/plain", "Error saving firmware.");
-    //   //   //   }
-    //   //   // } else {
-    //   //   //   request->send(500, "text/plain", "Error accessing uploaded firmware.");
-    //   //   // }
-    //   // } else {
-    //   //   request->send(400, "text/plain", "No firmware file uploaded.");
-    //   // }
-    // } else {
-    //   request->send(400, "text/plain", "Missing firmware file parameter.");
-    // }
-  }, [] (AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
-    String logmessage;
-    
-    if (!index) {
-      logmessage = "Upload Start: " + String(filename);
-      // open the file on first call and store the file handle in the request object
-      request->_tempFile = SPIFFS.open("/path/to/save/firmware.bin", "w");
-      Serial.println(logmessage);
-    }
+        //   // Check if the file was successfully uploaded
+        //   // if (fwFile->isFile()) {
+        //   //   // // File firmwre = fwFile->get
+        //   //   // File firmware = fwFile->getUpload();
+        //   //   // // Save the uploaded firmware to a file
+        //   //   // if (firmware) {
+        //   //   //   // Specify the path where you want to save the firmware
+        //   //   //   String firmwarePath = "/path/to/save/firmware.bin";
+        //   //   //   // Open a file in binary write mode
+        //   //   //   File firmwareFile = SPIFFS.open(firmwarePath, "w");
+        //   //   //   if (firmwareFile) {
+        //   //   //     while (firmware.available()) {
+        //   //   //       firmwareFile.write(firmware.read());
+        //   //   //     }
+        //   //   //     firmwareFile.close();
+        //   //   //     request->send(200, "text/plain", "Firmware uploaded successfully.");
+        //   //   //   } else {
+        //   //   //     request->send(500, "text/plain", "Error saving firmware.");
+        //   //   //   }
+        //   //   // } else {
+        //   //   //   request->send(500, "text/plain", "Error accessing uploaded firmware.");
+        //   //   // }
+        //   // } else {
+        //   //   request->send(400, "text/plain", "No firmware file uploaded.");
+        //   // }
+        // } else {
+        //   request->send(400, "text/plain", "Missing firmware file parameter.");
+        // }
+      },
+      [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final)
+      {
+        String logmessage;
 
-    if (len) {
-      // stream the incoming chunk to the opened file
-      request->_tempFile.write(data, len);
-      logmessage = "Writing file: " + String(filename) + " index=" + String(index) + " len=" + String(len);
-      Serial.println(logmessage);
-    }
+        if (!index)
+        {
+          logmessage = "Upload Start: " + String(filename);
+          // open the file on first call and store the file handle in the request object
+          request->_tempFile = SPIFFS.open("/path/to/save/firmware.bin", "w");
+          Serial.println(logmessage);
+        }
 
-    if (final) {
-      logmessage = "Upload Complete: " + String(filename) + ",size: " + String(index + len);
-      // close the file handle as the upload is now done
-      request->_tempFile.close();
-      Serial.println(logmessage);
-      fmrequest = request;
-      xTaskCreatePinnedToCore(Task1code, "updateFirmware", 10000, NULL, 1, &Task1, 1);
-      request->send(200, "text/plain", "Firmware update in progress... \nDo not restart or switch off the device.\nRetry connecting to Casi Mini NET WiFi netwok in 2 minutes and then http://"+ WiFi.softAPIP().toString() +".");
-      // while (!firmwareUploadEnd)
-      // {
-      //   delay(500);
-      // }
-      // if(firmwareUploadEnd) {
-      //   request->send(firmwareUploadResponseCode, "text/plain", firmwareUploadResponse);
-      //   firmwareUploadEnd = false;
-      //   if (firmwareUploadResponseCode==200) {
-      //     delay(3000);
-      //     Serial.println("Rebooting...");
-      //     ESP.restart();
-      //   }
-      // }
-      
-      // request->redirect("/");
-      // request->send(200, "text/plain", "Firmware uploaded successfully.");
-    }
-  });
+        if (len)
+        {
+          // stream the incoming chunk to the opened file
+          request->_tempFile.write(data, len);
+          logmessage = "Writing file: " + String(filename) + " index=" + String(index) + " len=" + String(len);
+          Serial.println(logmessage);
+        }
 
+        if (final)
+        {
+          logmessage = "Upload Complete: " + String(filename) + ",size: " + String(index + len);
+          // close the file handle as the upload is now done
+          request->_tempFile.close();
+          Serial.println(logmessage);
+          fmrequest = request;
+          xTaskCreatePinnedToCore(Task1code, "updateFirmware", 10000, NULL, 1, &Task1, 1);
+          request->send(200, "text/plain", "Firmware update in progress... \nDo not restart or switch off the device.\nRetry connecting to Casi Mini NET WiFi netwok in 2 minutes and then http://" + WiFi.softAPIP().toString() + ".");
+          // while (!firmwareUploadEnd)
+          // {
+          //   delay(500);
+          // }
+          // if(firmwareUploadEnd) {
+          //   request->send(firmwareUploadResponseCode, "text/plain", firmwareUploadResponse);
+          //   firmwareUploadEnd = false;
+          //   if (firmwareUploadResponseCode==200) {
+          //     delay(3000);
+          //     Serial.println("Rebooting...");
+          //     ESP.restart();
+          //   }
+          // }
+
+          // request->redirect("/");
+          // request->send(200, "text/plain", "Firmware uploaded successfully.");
+        }
+      });
 }
 
 void notifyGPIOStatus(int pin_id, String value)
@@ -1139,6 +1182,8 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
   Serial.println(dataReceived.msg_type);
   // Serial.print("Master Mac: ");
   // Serial.println(dataReceived.master_mac);
+  unsigned long currentTime = millis();
+  String MACAddr = String(mac[0], 16) + ":" + String(mac[1], 16) + ":" + String(mac[2], 16) + ":" + String(mac[3], 16) + ":" + String(mac[4], 16) + ":" + String(mac[5], 16);
   switch (dataReceived.msg_type)
   {
   case SLAVE_CONFIG:
@@ -1146,6 +1191,8 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
     break;
 
   case MASTER_IN:
+    // wsSlave.textAll("{ \"mac\": "+MACAddr+", \"timestamp\": "+String(currentTime)+"}");
+    slaveUpdates[MACAddr] = currentTime;
     handleMasterIn(dataReceived);
     break;
 
@@ -1193,7 +1240,7 @@ void configSlave(net_message slaveConfigMsg)
 
 void handleMasterIn(net_message masterInMsg)
 {
-  String mqttTopic = topic_in + "/" + masterInMsg.slave_id + "_";
+  String mqttTopic = topic_in + "/" + masterInMsg.slave_id + ".";
   switch (masterInMsg.data.pinType)
   {
   case AI:
@@ -1226,7 +1273,7 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
     Serial.print("Delivery Failed to ");
     for (size_t i = 0; i < (sizeof(mac_addr) / sizeof(uint8_t)); i++)
     {
-      Serial.print(mac_addr[i]);
+      Serial.print(mac_addr[i], HEX);
     }
     Serial.println();
   }
@@ -1281,25 +1328,52 @@ void setPeers(String mac_pref_string)
   }
 }
 
-void Task1code( void * pvParameters ){
+void Task1code(void *pvParameters)
+{
   Serial.print("Task1 running on core ");
   Serial.println(xPortGetCoreID());
 
+  //vTaskDelete(TaskLoop);
+  vTaskSuspend(TaskLoop);
   updateFirmware();
-  vTaskDelete( Task1 );
+  vTaskResume(TaskLoop);
+  vTaskDelete(Task1);
+}
+
+void TaskLoopCode(void *pvParameters)
+{
+  while (true)
+  {
+    unsigned long currentMillisNow = millis();
+    size_t num_peers = sizeof(peers) / sizeof(esp_now_peer_info_t);
+    for (auto slaveUpdate : slaveUpdates)
+    {
+      if (currentMillisNow - slaveUpdate.second > 5000)
+      {
+        wsSlave.textAll("{ \"mac\": \"" + slaveUpdate.first + "\", \"status\": \"offline\"}");
+      }
+      else
+      {
+        wsSlave.textAll("{ \"mac\": \"" + slaveUpdate.first + "\", \"status\": \"online\"}");
+      }
+    }
+    delay(700);
+  }
 }
 
 bool verifyAuth(AsyncWebServerRequest *request)
 {
   File dbFile = SPIFFS.open("/users.db", "r");
 
-  if (!dbFile) {
-      Serial.println("Failed to open users.db");
-      return false;
+  if (!dbFile)
+  {
+    Serial.println("Failed to open users.db");
+    return false;
   }
   Serial.println("Success to open users.db");
 
-  while(dbFile.available()){
+  while (dbFile.available())
+  {
     String username;
     String password;
     String role;
@@ -1309,7 +1383,7 @@ bool verifyAuth(AsyncWebServerRequest *request)
     {
       username = cellVal;
     }
-    
+
     cellVal = strtok(NULL, ",");
     if (cellVal != NULL)
     {
@@ -1323,7 +1397,8 @@ bool verifyAuth(AsyncWebServerRequest *request)
 
     if (username && password && role)
     {
-      if(request->authenticate(username.c_str(), password.c_str())) {
+      if (request->authenticate(username.c_str(), password.c_str()))
+      {
         dbFile.close();
         return true;
       }
@@ -1333,43 +1408,52 @@ bool verifyAuth(AsyncWebServerRequest *request)
   return false;
 }
 
-void updateFirmware() {
+void updateFirmware()
+{
   // Open the firmware binary file in SPIFFS
   File firmwareFile = SPIFFS.open("/path/to/save/firmware.bin", "r");
 
-  if (!firmwareFile) {
-      Serial.println("Failed to open firmware.bin");
-      firmwareUploadResponseCode = 501;
-      firmwareUploadResponse = "Firmware update failed! Failed to open firmware.bin.";
-      firmwareUploadEnd = true;
-      return;
+  if (!firmwareFile)
+  {
+    Serial.println("Failed to open firmware.bin");
+    firmwareUploadResponseCode = 501;
+    firmwareUploadResponse = "Firmware update failed! Failed to open firmware.bin.";
+    firmwareUploadEnd = true;
+    return;
   }
-  
+
   // Start the firmware update process
-  if (Update.begin(firmwareFile.size())) {
+  if (Update.begin(firmwareFile.size()))
+  {
     Serial.println("Updating firmware...");
     size_t written = Update.writeStream(firmwareFile);
 
-    if (written == firmwareFile.size()) {
+    if (written == firmwareFile.size())
+    {
       Serial.println("Firmware update successful!");
-    } else {
+    }
+    else
+    {
       Serial.println("Firmware update failed!");
       firmwareUploadResponseCode = 501;
       firmwareUploadResponse = "Firmware update failed!";
       firmwareUploadEnd = true;
-      //request->send(501, "text/plain", "Firmware update failed!");
+      // request->send(501, "text/plain", "Firmware update failed!");
     }
 
     // End the update
-    if (Update.end()) {
+    if (Update.end())
+    {
       firmwareUploadResponseCode = 200;
       firmwareUploadResponse = "Firmware uploaded successfully. Restarting the Device...";
       firmwareUploadEnd = true;
-      //request->send(200, "text/plain", "Firmware uploaded successfully. Restarting the Device...");
+      // request->send(200, "text/plain", "Firmware uploaded successfully. Restarting the Device...");
       delay(3000);
       Serial.println("Rebooting...");
       ESP.restart();
-    } else {
+    }
+    else
+    {
       Serial.println("Error Occurred. Error #: " + String(Update.getError()));
       Serial.println("Failed to end the update");
       firmwareUploadResponseCode = 501;
@@ -1377,14 +1461,15 @@ void updateFirmware() {
       firmwareUploadEnd = true;
       // request->send(501, "text/plain", "Firmware upload failed. Failed to end the update.");
     }
-  } else {
+  }
+  else
+  {
     Serial.println("Failed to begin the update");
     firmwareUploadResponseCode = 501;
     firmwareUploadResponse = "Firmware upload failed. Failed to begin the update.";
     firmwareUploadEnd = true;
-    //request->send(501, "text/plain", "Firmware upload failed. Failed to begin the update.");
+    // request->send(501, "text/plain", "Firmware upload failed. Failed to begin the update.");
   }
-  
+
   firmwareFile.close();
 }
-
