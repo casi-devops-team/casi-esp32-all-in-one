@@ -1017,6 +1017,9 @@ void setRoutes()
       }
       slavePinConfig += "}";
       preferences.putString("slave_pins", slavePinConfig);
+      request->send(200, "text/html", "<p>Casi Mini NET Master Configured Successfully.<br>Device will restart in 3 seconds...<br> <a href=\"/\">Return to homepage</a>.</p>");
+      delay(3000);
+      ESP.restart();
     }
     
     request->redirect("/net"); });
@@ -1081,8 +1084,7 @@ void setRoutes()
       request->send(501, "application/json", "Factory reset failed.");
     } });
 
-  server.on(
-      "/upload-firmware", HTTP_POST, [](AsyncWebServerRequest *request)
+  server.on("/upload-firmware", HTTP_POST, [](AsyncWebServerRequest *request)
       {
         if (!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str()))
           return request->requestAuthentication();
@@ -1146,7 +1148,7 @@ void setRoutes()
           Serial.println(logmessage);
           fmrequest = request;
           xTaskCreatePinnedToCore(Task1code, "updateFirmware", 10000, NULL, 1, &Task1, 1);
-          request->send(200, "text/plain", "Firmware update in progress... \nDo not restart or switch off the device.\nRetry connecting to Casi Mini NET WiFi netwok in 2 minutes and then http://" + WiFi.softAPIP().toString() + ".");
+          request->send(200, "text/html", "<p>Firmware update in progress... <br>Do not restart or switch off the device.<br>Return to <a href=\"/\">homapage</a> in 2 minutes.</p>");
           // while (!firmwareUploadEnd)
           // {
           //   delay(500);
@@ -1234,7 +1236,7 @@ void configSlave(net_message slaveConfigMsg)
     }
   }
 
-  delay(2000);
+  delay(1000);
   ESP.restart();
 }
 
