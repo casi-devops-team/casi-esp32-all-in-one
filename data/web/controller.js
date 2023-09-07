@@ -10,6 +10,19 @@ fetch("/sidebar.html").then(x => x.text()).then((response) => {
     });
 });
 
+function validateChangePass() {
+    const password = document.getElementById("password")
+    const confirm_password = document.getElementById("confirmPassword");
+    if(password.value != confirm_password.value) {
+        // confirm_password.setCustomValidity("Passwords Don't Match");
+        alert("Passwords Don't Match");
+        return false;
+    } else {
+        // confirm_password.setCustomValidity('');
+        return true;
+    }
+}
+
 function logoutButton() {
     var xhr = new XMLHttpRequest();
     xhr.open("GET", "/logout", true);

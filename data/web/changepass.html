@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" type="text/css" href="sidebar.css">
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+
+<body onload="loadWiFiData()">
+
+    <div class="sidebar" id="sidebar">
+    </div>
+
+
+    <div class="content">
+        <div class="alert alert-success alert-dismissible fade show flex" role="alert">
+            <span id="alert-message">Response</span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        <form class="form" action="/change-pass" method="POST" onsubmit="return validateChangePass()">
+            <div class="form__title">Change Password</div>
+            <p class="form__desc">
+                Change Your Password Here.
+            </p>
+            <div class="form__item">
+                <label for="oldPassword" class="form__label">Old Password</label>
+                <input type="password" class="form__input" name="oldPassword" id="oldPassword" value="" placeholder="Enter your Old Password"
+                    required />
+                <span class="form__error">A sample error message</span>
+            </div>
+            <div class="form__item">
+                <label for="givennames" class="form__label">New Password</label>
+                <input type="password" class="form__input" name="password" id="password" value=""
+                    placeholder="New Password" required />
+                <span class="form__error">A sample error message</span>
+            </div>
+            <div class="form__item">
+                <label for="confirmPassword" class="form__label">Confirm Password</label>
+                <input type="password" class="form__input" name="confirmPassword" id="confirmPassword" value=""
+                    placeholder="Confirm Password" required />
+                <span class="form__error">A sample error message</span>
+            </div>
+            <div class="form__item">
+                <button class="form__btn" style="align-self: start;" type="submit">Save</button>
+            </div>
+        </form>
+        
+    </div>
+    %VERSION%
+    <div id="reset-confirmation-container">
+        <div id="reset-confirmation-model" class="modal">
+            <div class="modal-content">
+                <h1>Factory Reset</h1>
+                <p>Are you sure you want to proceed? This cannot be undone.</p>
+                <button class="form__btn" id="reset-confirmation">Yes</button>
+                <button class="form__btn" id="confirmNo">No</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="/controller.js"></script>
+    <script src="/index.js"></script>
+    <script>
+        function loadWiFiData() {
+            let ssid = document.getElementById("ssid");
+            let password = document.getElementById("password");
+            axios.get("/getWiFiData").then((response) => {
+                if (response.data) {
+                    ssid.value = response.data.ssid;
+                    password.value = response.data.password;
+                }
+            });
+        }
+    </script>
+</body>
+
+</html>

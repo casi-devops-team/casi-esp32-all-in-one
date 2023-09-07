@@ -38,6 +38,28 @@ div.content {
     height: 1000px;
 }
 
+.logout {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-content: center;
+    width: inherit;
+    bottom: 0px;
+    position: absolute;
+    height: 6vh;
+    background: #32a2f4;
+    border: none;
+    font-family: "Source Sans Pro", sans-serif;
+    font-weight: 600;
+    font-size: 1.1em;
+    color: #fff;
+    cursor: pointer;
+}
+
+.logout svg {
+    padding: 0 4px;
+}
+
 @media screen and (max-width: 700px) {
     .sidebar {
         width: 100%;

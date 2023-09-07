@@ -118,9 +118,6 @@ bool firmwareUploadEnd = false;
 int firmwareUploadResponseCode = 500;
 String firmwareUploadResponse = "";
 
-String http_username = "admin";
-String http_password = "admin";
-
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -201,6 +198,7 @@ void handleMasterIn(net_message masterInMsg);
 void factoryReset();
 void updateFirmware();
 void Task1code( void * pvParameters );
+bool verifyAuth(AsyncWebServerRequest *request);
 
 //--------------------------------------------------------
 void connectToMqtt()
@@ -333,6 +331,12 @@ void onMqttPublish(uint16_t packetId)
 void setup()
 {
   preferences.begin("MQTT", false);
+  preferences.putString("http_username", "admin");
+  if (!preferences.getString("http_password"))
+  {
+    preferences.putString("http_password", "pass");
+  }
+  
   // preferences.putString("ssid", "Dialog 4G 707");
   // preferences.putString("password", "1JhLgena");
   // preferences.putString("ssid", "Dialog 4G");
@@ -756,41 +760,59 @@ void setRoutes()
   // Route for root / web page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             {
-              if(!request->authenticate(http_username.c_str(), http_password.c_str())) return request->requestAuthentication(); 
-    // request->send_P(200, "text/html", index_html, processor);
-    request->send(SPIFFS, "/index.html", "text/html", false, processor); });
+    // if (!verifyAuth(request))
+    // {
+    //   return request->requestAuthentication();
+    // }
+    if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication(); 
+    //request->send_P(200, "text/html", index_html, processor);
+    request->send(SPIFFS, "/web/index.html", "text/html", false, processor); });
   
   server.on("/logout", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(401);
   });
 
   server.on("/logged-out", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/html", "/logout.html", processor);
+    request->send(SPIFFS, "/web/logout.html", "text/html", false, processor);
   });
 
   server.on("/mqtt", HTTP_GET, [](AsyncWebServerRequest *request)
-            { request->send(SPIFFS, "/mqtt.html", "text/html"); });
+            { 
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
+              request->send(SPIFFS, "/web/mqtt.html", "text/html"); });
 
   server.on("/pins", HTTP_GET, [](AsyncWebServerRequest *request)
-            { request->send(SPIFFS, "/pins.html", "text/html"); });
+            { 
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
+              request->send(SPIFFS, "/web/pins.html", "text/html"); });
 
   server.on("/net", HTTP_GET, [](AsyncWebServerRequest *request)
-            { request->send(SPIFFS, "/net.html", "text/html"); });
+            { 
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
+              request->send(SPIFFS, "/web/net.html", "text/html"); });
+  
+  server.on("/change-pass", HTTP_GET, [](AsyncWebServerRequest *request)
+            { 
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
+              request->send(SPIFFS, "/web/changepass.html", "text/html"); });
 
   server.on("/getWiFiData", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
     String existing_ssid = preferences.getString("ssid");
     String existing_password = preferences.getString("password");
     request->send(200, "application/json", "{ \"ssid\" : \""+existing_ssid+"\", \"password\": \""+existing_password+"\"}"); });
 
   server.on("/loadMQTTData", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
     String existing_ssid = preferences.getString("ssid");
     String existing_password = preferences.getString("password");
     request->send(200, "application/json", "{ \"mqtt_broker\" : \""+preferences.getString("mqtt_broker")+"\", \"mqtt_username\": \""+preferences.getString("mqtt_username")+"\", \"mqtt_password\": \""+preferences.getString("mqtt_password")+"\", \"mqtt_port\": \""+preferences.getString("mqtt_port")+"\"}"); });
 
   server.on("/loadPinsData", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
               String response = "{ \"pins\": {";
               size_t count = sizeof(pins) / sizeof(int);
               for (size_t i = 0; i < count; i++)
@@ -812,6 +834,7 @@ void setRoutes()
 
   server.on("/loadSlavePinsData", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
               String slavePinConfig = preferences.getString("slave_pins");
               String macList = preferences.getString("mac_list");
               String deviceMode = String(preferences.getInt("device_mode"));
@@ -827,6 +850,7 @@ void setRoutes()
 
   server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request)
             {
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
     String new_ssid;
     String new_password;
 
@@ -854,6 +878,7 @@ void setRoutes()
 
   server.on("/mqtt", HTTP_POST, [](AsyncWebServerRequest *request)
             {
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
       int params = request->params();
       for(int i=0;i<params;i++){
         AsyncWebParameter* p = request->getParam(i);
@@ -898,6 +923,7 @@ void setRoutes()
 
   server.on("/pins", HTTP_POST, [](AsyncWebServerRequest *request)
             {
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
     int params = request->params();
     for (int i = 0; i < params; i++){
       AsyncWebParameter* p = request->getParam(i);
@@ -909,6 +935,7 @@ void setRoutes()
 
   server.on("/net", HTTP_POST, [](AsyncWebServerRequest *request)
             {
+              if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
     int device_mode = request->getParam("device_mode", true)->value().toInt();
     if (device_mode== SLAVE_MODE)
     {
@@ -964,7 +991,47 @@ void setRoutes()
     
     request->redirect("/net"); });
 
+  server.on("/change-pass", HTTP_POST, [] (AsyncWebServerRequest *request){
+    if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
+    String old_password;
+    String new_password;
+    String confirm_password;
+
+    int params = request->params();
+    for (int i = 0; i < params; i++){
+      AsyncWebParameter* p = request->getParam(i);
+      if (p->name()=="oldPassword")
+      {
+        old_password = p->value();
+      }
+      else if (p->name()=="password")
+      {
+        new_password = p->value();
+      }
+      else if (p->name()=="confirmPassword")
+      {
+        confirm_password = p->value();
+      }
+      
+      //Serial.printf("POST[%s]: %s\n", p->name().c_str(), p->value().c_str());
+    }
+
+    if (new_password == confirm_password)
+    {
+      if(old_password == preferences.getString("http_password")){
+        preferences.putString("http_password", new_password);
+        request->send(200, "text/html", "<p>Password Updated Successfully. <a href=\"/\">return to homepage</a>.</p>");
+      } else {
+        request->send(501, "text/html", "<p>Passwords Don't Match. <a href=\"/\">return to homepage</a>.</p>");
+      }
+    } else {
+      request->send(501, "text/html", "<p>Confirm Password Don't Match. <a href=\"/\">return to homepage</a>.</p>");
+    }
+    
+  });
+
   server.on("/factory-reset", HTTP_GET, [](AsyncWebServerRequest *request){
+    if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
     try {
       // throw std::exception();
       factoryReset();
@@ -979,6 +1046,7 @@ void setRoutes()
   });
 
   server.on("/upload-firmware", HTTP_POST, [] (AsyncWebServerRequest *request) {
+    if(!request->authenticate(preferences.getString("http_username").c_str(), preferences.getString("http_password").c_str())) return request->requestAuthentication();
     // if (request->hasParam("firmwareFile", true)) {
     //   AsyncWebParameter *fwFile = request->getParam("firmwareFile", true);
 
@@ -1219,6 +1287,50 @@ void Task1code( void * pvParameters ){
 
   updateFirmware();
   vTaskDelete( Task1 );
+}
+
+bool verifyAuth(AsyncWebServerRequest *request)
+{
+  File dbFile = SPIFFS.open("/users.db", "r");
+
+  if (!dbFile) {
+      Serial.println("Failed to open users.db");
+      return false;
+  }
+  Serial.println("Success to open users.db");
+
+  while(dbFile.available()){
+    String username;
+    String password;
+    String role;
+    String dbLine = dbFile.readStringUntil('\n');
+    char *cellVal = strtok((char *)dbLine.c_str(), ",");
+    if (cellVal != NULL)
+    {
+      username = cellVal;
+    }
+    
+    cellVal = strtok(NULL, ",");
+    if (cellVal != NULL)
+    {
+      password = cellVal;
+    }
+    cellVal = strtok(NULL, ",");
+    if (cellVal != NULL)
+    {
+      role = cellVal;
+    }
+
+    if (username && password && role)
+    {
+      if(request->authenticate(username.c_str(), password.c_str())) {
+        dbFile.close();
+        return true;
+      }
+    }
+  }
+  dbFile.close();
+  return false;
 }
 
 void updateFirmware() {
