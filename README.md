@@ -11,6 +11,7 @@
 
 1. Clone this repository into yor computer and open the project in VS Code
 2. Remove all other serial devices except ESP32.
+3. Upload the file system image
    #### Uploading Filesystem Image
    1. Click the PIO icon at the left side bar. The project tasks should open.
    2. Select env:esp32-devkit (it may be slightly different depending on the board you’re using).
@@ -18,6 +19,14 @@
    4. Select Build Filesystem Image.
    5. After the build is completed, Click Upload Filesystem Image.
    ![image](https://github.com/casi-devops-team/casi-esp32-all-in-one/assets/136977780/76245276-bc13-4e43-8a13-6105925aca21)
+   
+4. click on the Upload icon to compile and upload the code. Alternatively, you can go to the PIO Project Tasks menu and select Upload.
+   ![image](https://github.com/casi-devops-team/casi-esp32-all-in-one/assets/136977780/7b76e6b0-6d2e-42ee-a930-334b809636e1)
+5. If the code is successfully uploaded, you should get the following message.
+   ![image](https://github.com/casi-devops-team/casi-esp32-all-in-one/assets/136977780/4cf08057-6e52-4c2d-9780-24c289b4fff9)
+6. Once the upload is completed, you should press EN/RST button once on the esp32 device
+
+
 
 
 # User Guide (to be moved to another repository)
