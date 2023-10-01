@@ -26,7 +26,7 @@
    ![image](https://github.com/casi-devops-team/casi-esp32-all-in-one/assets/136977780/4cf08057-6e52-4c2d-9780-24c289b4fff9)
 6. Once the upload is completed, you should press EN/RST button once on the esp32 device.
 7. Then you will see a new network (`CASI Mini NET`) in your WiFi networks. Connect to `CASI Mini NET` using the default password `12345678`.
-8. Use the MAC Address without colons(`:`) as the serial number of the device.
+8. Use the MAC Address **without** colons(`:`) as the serial number of the device.
 
 
 
