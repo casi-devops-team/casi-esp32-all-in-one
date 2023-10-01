@@ -3,7 +3,7 @@
 
 ## Initial Installation of Software
 ### Prerequisites
-1. Visual Studio Code (VS Code)
+1. Visual Studio Code (VS Code) (https://code.visualstudio.com/download)
 2. Platform.io extention installed on Visual Studio Code (https://platformio.org/install/ide?install=vscode)
 3. If you are using Windows, install **CP210x Universal Windows Driver**, additionally. (https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers?tab=downloads)
 
